@@ -1,0 +1,736 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { 
+  Play, Pause, RotateCcw, Plus, CheckCircle2, Circle, Trash2, Settings, 
+  Clock, LayoutList, Coffee, Zap, BarChart3, Volume2, Upload, ChevronDown,
+  ChevronLeft, ChevronRight, X, Trophy, Calendar, ArrowRight, Home, ListTodo, 
+  Activity, ChevronUp
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { clsx, type ClassValue } from 'clsx';
+import { twMerge } from 'tailwind-merge';
+
+function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
+
+type TimerMode = 'work' | 'shortBreak' | 'longBreak';
+type Priority = 'low' | 'medium' | 'high';
+type CalendarView = 'day' | 'week' | 'month';
+type AppView = 'timer' | 'tasks' | 'calendar' | 'dashboard';
+
+interface SubTask {
+  id: string;
+  text: string;
+  completed: boolean;
+  createdAt: number;
+  parentId: string; // Reference to parent task
+}
+
+interface Task {
+  id: string;
+  text: string;
+  completed: boolean;
+  priority: Priority;
+  createdAt: number;
+  dueDate?: string;
+  parentId?: string; // For sub-tasks, references parent task ID
+  subTasks: SubTask[];
+}
+
+interface DailyStat {
+  date: string;
+  sessions: number;
+  focusMinutes: number;
+  tasksCompleted: number;
+  subTasksCompleted: number;
+}
+
+interface SoundOption {
+  id: string;
+  name: string;
+  url: string;
+}
+
+const DEFAULT_SOUNDS: SoundOption[] = [
+  { id: 'bell', name: 'Zen Bell', url: 'https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3' },
+  { id: 'digital', name: 'Digital Beep', url: 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3' },
+  { id: 'crystal', name: 'Crystal Chime', url: 'https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3' },
+];
+
+const MODES: Record<TimerMode, { label: string; duration: number; icon: React.ReactNode; color: string }> = {
+  work: { label: 'Focus', duration: 25 * 60, icon: <Zap className="w-4 h-4" />, color: 'text-emerald-400' },
+  shortBreak: { label: 'Short Break', duration: 5 * 60, icon: <Coffee className="w-4 h-4" />, color: 'text-blue-400' },
+  longBreak: { label: 'Long Break', duration: 15 * 60, icon: <Clock className="w-4 h-4" />, color: 'text-indigo-400' },
+};
+
+const PRIORITY_COLORS: Record<Priority, string> = {
+  low: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+  medium: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+  high: 'bg-red-500/10 text-red-400 border-red-500/20',
+};
+
+const HEATMAP_COLORS = ['#0d1117', '#0e4429', '#006d32', '#26a641', '#39d353'];
+
+export default function App() {
+  const [view, setView] = useState<AppView>('dashboard');
+  const [mode, setMode] = useState<TimerMode>('work');
+  const [timeLeft, setTimeLeft] = useState(MODES.work.duration);
+  const [isActive, setIsActive] = useState(false);
+  const [tasks, setTasks] = useState<Task[]>(() => {
+    const saved = localStorage.getItem('onyx_tasks');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [newTaskText, setNewTaskText] = useState('');
+  const [newTaskPriority, setNewTaskPriority] = useState<Priority>('medium');
+  const [newTaskDueDate, setNewTaskDueDate] = useState('');
+  const [stats, setStats] = useState<DailyStat[]>(() => {
+    const saved = localStorage.getItem('onyx_stats');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [selectedSound, setSelectedSound] = useState<SoundOption>(DEFAULT_SOUNDS[0]);
+  const [customSounds, setCustomSounds] = useState<SoundOption[]>([]);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showTimerDatePicker, setShowTimerDatePicker] = useState(false);
+  const [showTasksDatePicker, setShowTasksDatePicker] = useState(false);
+  const [calendarView, setCalendarView] = useState<CalendarView>('month');
+  const [calendarDate, setCalendarDate] = useState(new Date());
+  const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
+  const [newSubTaskText, setNewSubTaskText] = useState<Record<string, string>>({});
+  const [dashboardNewTaskText, setDashboardNewTaskText] = useState('');
+  const [dashboardNewTaskPriority, setDashboardNewTaskPriority] = useState<Priority>('medium');
+  const [dashboardNewSubTasks, setDashboardNewSubTasks] = useState<string[]>([]);
+  const [dashboardNewSubTask, setDashboardNewSubTask] = useState('');
+  const [dashboardDueDate, setDashboardDueDate] = useState('');
+  const [showDashboardDatePicker, setShowDashboardDatePicker] = useState(false);
+  const [timerNewSubTasks, setTimerNewSubTasks] = useState<string[]>([]);
+  const [timerNewSubTask, setTimerNewSubTask] = useState('');
+  const [currentTime, setCurrentTime] = useState(new Date());
+  const [editingSubTaskId, setEditingSubTaskId] = useState<string | null>(null);
+  const [editingSubTaskText, setEditingSubTaskText] = useState('');
+  
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => { localStorage.setItem('onyx_tasks', JSON.stringify(tasks)); }, [tasks]);
+  useEffect(() => { localStorage.setItem('onyx_stats', JSON.stringify(stats)); }, [stats]);
+  useEffect(() => { const interval = setInterval(() => setCurrentTime(new Date()), 1000); return () => clearInterval(interval); }, []);
+
+  const toggleTimer = () => setIsActive(!isActive);
+  const resetTimer = useCallback(() => { setIsActive(false); setTimeLeft(MODES[mode].duration); }, [mode]);
+
+  const updateStats = useCallback((focusMinutes = 0, sessionCompleted = false, taskCompleted = false, subTaskCompleted = false) => {
+    const today = new Date().toISOString().split('T')[0];
+    setStats(prev => {
+      const existing = prev.find(s => s.date === today);
+      if (existing) {
+        return prev.map(s => s.date === today ? {
+          ...s, sessions: s.sessions + (sessionCompleted ? 1 : 0),
+          focusMinutes: s.focusMinutes + focusMinutes,
+          tasksCompleted: s.tasksCompleted + (taskCompleted ? 1 : 0),
+          subTasksCompleted: s.subTasksCompleted + (subTaskCompleted ? 1 : 0)
+        } : s);
+      }
+      return [...prev, { date: today, sessions: sessionCompleted ? 1 : 0, focusMinutes, tasksCompleted: taskCompleted ? 1 : 0, subTasksCompleted: subTaskCompleted ? 1 : 0 }];
+    });
+  }, []);
+
+  useEffect(() => {
+    if (isActive && timeLeft > 0) {
+      timerRef.current = setInterval(() => setTimeLeft(prev => prev - 1), 1000);
+    } else if (timeLeft === 0) {
+      setIsActive(false);
+      if (audioRef.current) audioRef.current.play().catch(() => {});
+      if (mode === 'work') updateStats(MODES.work.duration / 60, true);
+      if (timerRef.current) clearInterval(timerRef.current);
+    } else {
+      if (timerRef.current) clearInterval(timerRef.current);
+    }
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [isActive, timeLeft, mode, updateStats]);
+
+  useEffect(() => { resetTimer(); }, [mode, resetTimer]);
+
+  const addTask = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTaskText.trim()) return;
+    const newTask: Task = {
+      id: crypto.randomUUID(), text: newTaskText.trim(), completed: false,
+      priority: newTaskPriority, createdAt: Date.now(), dueDate: newTaskDueDate || undefined, subTasks: [],
+    };
+    setTasks([newTask, ...tasks]);
+    setNewTaskText(''); setNewTaskPriority('medium'); setNewTaskDueDate('');
+  };
+
+  const addTaskForDate = (date: string) => {
+    const newTask: Task = { id: crypto.randomUUID(), text: 'New Task', completed: false, priority: 'medium', createdAt: Date.now(), dueDate: date, subTasks: [] };
+    setTasks([newTask, ...tasks]);
+  };
+
+  const toggleTask = (id: string) => {
+    setTasks(prev => {
+      const task = prev.find(t => t.id === id);
+      if (task && !task.completed) updateStats(0, false, true);
+      return prev.map(t => t.id === id ? { ...t, completed: !t.completed } : t);
+    });
+  };
+
+  const deleteTask = (id: string) => { setTasks(tasks.filter(t => t.id !== id)); };
+
+  const toggleExpanded = (taskId: string) => {
+    setExpandedTasks(prev => { const newSet = new Set(prev); newSet.has(taskId) ? newSet.delete(taskId) : newSet.add(taskId); return newSet; });
+  };
+
+  const addSubTask = (taskId: string) => {
+    const text = newSubTaskText[taskId]?.trim();
+    if (!text) return;
+    const newSubTask: SubTask = { id: crypto.randomUUID(), text, completed: false, createdAt: Date.now(), parentId: taskId };
+    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, subTasks: [...t.subTasks, newSubTask] } : t));
+    setNewSubTaskText(prev => ({ ...prev, [taskId]: '' }));
+  };
+
+  const toggleSubTask = (taskId: string, subTaskId: string) => {
+    setTasks(prev => prev.map(t => {
+      if (t.id !== taskId) return t;
+      const subTask = t.subTasks.find(st => st.id === subTaskId);
+      if (subTask && !subTask.completed) updateStats(0, false, false, true);
+      return { ...t, subTasks: t.subTasks.map(st => st.id === subTaskId ? { ...st, completed: !st.completed } : st) };
+    }));
+  };
+
+  const deleteSubTask = (taskId: string, subTaskId: string) => {
+    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, subTasks: t.subTasks.filter(st => st.id !== subTaskId) } : t));
+  };
+
+  const editSubTask = (taskId: string, subTaskId: string) => {
+    const task = tasks.find(t => t.id === taskId);
+    const subTask = task?.subTasks.find(st => st.id === subTaskId);
+    if (subTask) {
+      setEditingSubTaskId(subTaskId);
+      setEditingSubTaskText(subTask.text);
+    }
+  };
+
+  const saveSubTaskEdit = (taskId: string, subTaskId: string) => {
+    if (!editingSubTaskText.trim()) return;
+    setTasks(prev => prev.map(t => t.id === taskId ? { 
+      ...t, 
+      subTasks: t.subTasks.map(st => st.id === subTaskId ? { ...st, text: editingSubTaskText.trim() } : st) 
+    } : t));
+    setEditingSubTaskId(null);
+    setEditingSubTaskText('');
+  };
+
+  const reorderSubTask = (taskId: string, subTaskId: string, direction: 'up' | 'down') => {
+    setTasks(prev => prev.map(t => {
+      if (t.id !== taskId) return t;
+      const subTasks = [...t.subTasks];
+      const index = subTasks.findIndex(st => st.id === subTaskId);
+      if (index === -1) return t;
+      if (direction === 'up' && index > 0) {
+        [subTasks[index], subTasks[index - 1]] = [subTasks[index - 1], subTasks[index]];
+      } else if (direction === 'down' && index < subTasks.length - 1) {
+        [subTasks[index], subTasks[index + 1]] = [subTasks[index + 1], subTasks[index]];
+      }
+      return { ...t, subTasks };
+    }));
+  };
+
+  const getTaskProgress = (task: Task) => {
+    const total = task.subTasks.length;
+    const completed = task.subTasks.filter(st => st.completed).length;
+    return { completed, total, percentage: total > 0 ? Math.round((completed / total) * 100) : 0 };
+  };
+
+  const handleSoundUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const url = URL.createObjectURL(file);
+      const newSound = { id: `custom-${Date.now()}`, name: file.name, url };
+      setCustomSounds(prev => [...prev, newSound]);
+      setSelectedSound(newSound);
+    }
+  };
+
+  const formatTime = (seconds: number) => `${Math.floor(seconds / 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`;
+  const progress = (1 - timeLeft / MODES[mode].duration) * 100;
+
+  const chartData = useMemo(() => {
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(); d.setDate(d.getDate() - i);
+      const dateStr = d.toISOString().split('T')[0];
+      const stat = stats.find(s => s.date === dateStr);
+      // Show total activities: focus sessions + tasks completed + sub-tasks completed
+      const activities = (stat?.sessions || 0) + (stat?.tasksCompleted || 0) + (stat?.subTasksCompleted || 0);
+      return { name: d.toLocaleDateString(undefined, { weekday: 'short' }), minutes: stat?.focusMinutes || 0, tasks: activities };
+    }).reverse();
+  }, [stats]);
+
+  const totalFocusTime = stats.reduce((acc, s) => acc + s.focusMinutes, 0);
+  const totalTasks = stats.reduce((acc, s) => acc + s.tasksCompleted, 0);
+  const totalSessions = stats.reduce((acc, s) => acc + s.sessions, 0);
+  const totalSubTasks = stats.reduce((acc, s) => acc + s.subTasksCompleted, 0);
+
+  const heatmapData = useMemo(() => {
+    const data: { date: string; count: number; level: number }[] = [];
+    const today = new Date();
+    for (let i = 364; i >= 0; i--) {
+      const d = new Date(today); d.setDate(d.getDate() - i);
+      const dateStr = d.toISOString().split('T')[0];
+      const stat = stats.find(s => s.date === dateStr);
+      const count = (stat?.tasksCompleted || 0) + (stat?.subTasksCompleted || 0) + (stat?.sessions || 0);
+      let level = 0;
+      if (count >= 1) level = 1; if (count >= 3) level = 2; if (count >= 5) level = 3; if (count >= 8) level = 4;
+      data.push({ date: dateStr, count, level });
+    }
+    return data;
+  }, [stats]);
+
+  const getDaysInMonth = (date: Date) => {
+    const year = date.getFullYear(), month = date.getMonth();
+    const firstDay = new Date(year, month, 1), lastDay = new Date(year, month + 1, 0);
+    const daysInMonth = lastDay.getDate(), startingDay = firstDay.getDay();
+    const days: { date: string; day: number; isCurrentMonth: boolean; tasks: Task[] }[] = [];
+    const prevMonthLastDay = new Date(year, month, 0).getDate();
+    for (let i = startingDay - 1; i >= 0; i--) {
+      const d = new Date(year, month - 1, prevMonthLastDay - i);
+      days.push({ date: d.toISOString().split('T')[0], day: prevMonthLastDay - i, isCurrentMonth: false, tasks: [] });
+    }
+    for (let i = 1; i <= daysInMonth; i++) {
+      const d = new Date(year, month, i), dateStr = d.toISOString().split('T')[0];
+      days.push({ date: dateStr, day: i, isCurrentMonth: true, tasks: tasks.filter(t => t.dueDate === dateStr) });
+    }
+    const remainingDays = 42 - days.length;
+    for (let i = 1; i <= remainingDays; i++) {
+      const d = new Date(year, month + 1, i);
+      days.push({ date: d.toISOString().split('T')[0], day: i, isCurrentMonth: false, tasks: [] });
+    }
+    return days;
+  };
+
+  const navigateCalendar = (direction: 'prev' | 'next') => {
+    const newDate = new Date(calendarDate);
+    if (calendarView === 'month') newDate.setMonth(newDate.getMonth() + (direction === 'next' ? 1 : -1));
+    else if (calendarView === 'week') newDate.setDate(newDate.getDate() + (direction === 'next' ? 7 : -7));
+    else newDate.setDate(newDate.getDate() + (direction === 'next' ? 1 : -1));
+    setCalendarDate(newDate);
+  };
+
+  const goToToday = () => { setCalendarDate(new Date()); };
+
+  const getToday = () => new Date().toISOString().split('T')[0];
+
+  const handleDashboardAddTask = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!dashboardNewTaskText.trim()) return;
+    const newTask: Task = {
+      id: crypto.randomUUID(), text: dashboardNewTaskText.trim(), completed: false,
+      priority: dashboardNewTaskPriority, createdAt: Date.now(), dueDate: dashboardDueDate || undefined,
+      subTasks: dashboardNewSubTasks.filter(st => st.trim()).map(st => ({ id: crypto.randomUUID(), text: st.trim(), completed: false, createdAt: Date.now() })),
+    };
+    setTasks([newTask, ...tasks]);
+    setDashboardNewTaskText(''); setDashboardNewTaskPriority('medium'); setDashboardNewSubTasks([]); setDashboardDueDate('');
+  };
+
+  const addDashboardSubTask = () => {
+    if (dashboardNewSubTask.trim()) { setDashboardNewSubTasks([...dashboardNewSubTasks, dashboardNewSubTask.trim()]); setDashboardNewSubTask(''); }
+  };
+
+  const removeDashboardSubTask = (index: number) => { setDashboardNewSubTasks(dashboardNewSubTasks.filter((_, i) => i !== index)); };
+
+  const addTimerSubTask = () => {
+    if (timerNewSubTask.trim()) { setTimerNewSubTasks([...timerNewSubTasks, timerNewSubTask.trim()]); setTimerNewSubTask(''); }
+  };
+
+  const removeTimerSubTask = (index: number) => { setTimerNewSubTasks(timerNewSubTasks.filter((_, i) => i !== index)); };
+
+  return (
+    <div className="min-h-screen bg-[#050505] text-white font-sans selection:bg-white/20">
+      <audio ref={audioRef} src={selectedSound.url} />
+      <div className="max-w-6xl mx-auto px-6 py-8 md:py-12">
+        <header className="flex justify-between items-center mb-10">
+          <button onClick={() => setView('dashboard')} className="focusflow-btn flex items-center gap-3" aria-label="Go to Dashboard">
+            <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center"><div className="w-5 h-5 bg-black rounded-full" /></div>
+            <h1 className="text-xl font-semibold tracking-tight text-gradient pr-2">FocusFlow</h1>
+          </button>
+          <div className="flex items-center gap-1 bg-white/5 rounded-2xl p-1.5 nav-glow">
+            {[{ id: 'dashboard', icon: Home, label: 'Dashboard' }, { id: 'timer', icon: Zap, label: 'Timer' }, { id: 'tasks', icon: LayoutList, label: 'Tasks' }, { id: 'calendar', icon: Calendar, label: 'Calendar' }].map(item => (
+              <button key={item.id} onClick={() => setView(item.id as AppView)}
+                className={cn("nav-btn nav-scale relative p-2.5 rounded-xl transition-all flex items-center gap-2 overflow-hidden", view === item.id ? "active text-white" : "text-white/50 hover:text-white")} title={item.label}>
+                <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.95 }} className="relative z-10"><item.icon className="w-5 h-5" /></motion.div>
+                <span className="text-sm hidden md:inline relative z-10">{item.label}</span>
+                {view === item.id && <motion.div layoutId="activeNav" className="absolute inset-0 bg-gradient-to-r from-blue-500 to-purple-500 rounded-xl" initial={false} transition={{ type: "spring", stiffness: 500, damping: 35 }} />}
+              </button>
+            ))}
+          </div>
+          <button onClick={() => setShowSettings(true)} className="p-2 hover:bg-white/5 rounded-xl transition-colors text-white/40"><Settings className="w-5 h-5" /></button>
+        </header>
+
+        <AnimatePresence mode="wait">
+          {view === 'dashboard' && (
+            <motion.div key="dashboard" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
+              {/* Quick Add Task */}
+              <div className="floating-card p-6">
+                <h3 className="text-lg font-medium flex items-center gap-2 mb-4"><Plus className="w-5 h-5 text-white/40" />Quick Add Task</h3>
+                <form onSubmit={handleDashboardAddTask} className="space-y-4">
+                  <div className="relative">
+                    <input type="text" value={dashboardNewTaskText} onChange={e => setDashboardNewTaskText(e.target.value)} placeholder="What needs to be done?" className="task-input w-full" />
+                    <Plus className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/20" />
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex gap-2">
+                      <input type="text" value={dashboardNewSubTask} onChange={e => setDashboardNewSubTask(e.target.value)} onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addDashboardSubTask())} placeholder="Add sub-tasks (press Enter)" className="task-input flex-1" />
+                      <button type="button" onClick={addDashboardSubTask} className="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-xl"><Plus className="w-4 h-4" /></button>
+                    </div>
+                    {dashboardNewSubTasks.length > 0 && (
+                      <div className="flex flex-wrap gap-2">
+                        {dashboardNewSubTasks.map((st, i) => (<motion.span key={i} initial={{ scale: 0 }} animate={{ scale: 1 }} className="inline-flex items-center gap-1 px-3 py-1 bg-white/10 rounded-full text-sm">{st}<button type="button" onClick={() => removeDashboardSubTask(i)} className="hover:text-red-400"><X className="w-3 h-3" /></button></motion.span>))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <select value={dashboardNewTaskPriority} onChange={e => setDashboardNewTaskPriority(e.target.value as Priority)} className="flex-1 bg-white/5 border border-white/10 rounded-xl py-2 px-3 text-xs text-white/60">
+                      <option value="low">Low Priority</option><option value="medium">Medium</option><option value="high">High</option>
+                    </select>
+                    {(['low', 'medium', 'high'] as Priority[]).map(p => (
+                      <button key={p} type="button" onClick={() => setDashboardNewTaskPriority(p)} className={cn("flex-1 py-2 rounded-xl text-[10px] uppercase font-bold border", dashboardNewTaskPriority === p ? PRIORITY_COLORS[p] : "bg-white/5 text-white/20")}>{p}</button>
+                    ))}
+                    <button type="submit" className="quick-add-btn">Add Task</button>
+                  </div>
+                </form>
+              </div>
+
+              {/* Activity Heatmap */}
+              <div className="floating-card p-6">
+                <div className="flex items-center justify-between mb-6"><h3 className="text-lg font-medium flex items-center gap-2"><Activity className="w-5 h-5 text-white/40" />Activity Heatmap</h3><span className="text-xs text-white/40">Last 365 days</span></div>
+                <div className="overflow-x-auto pb-4">
+                  <div className="flex gap-1 min-w-max">
+                    {Array.from({ length: 53 }, (_, wi) => (<div key={wi} className="flex flex-col gap-1">
+                      {heatmapData.slice(wi * 7, (wi + 1) * 7).map((day, di) => (<div key={di} className="w-3 h-3 rounded-sm" style={{ backgroundColor: HEATMAP_COLORS[day.level] }} title={`${day.date}: ${day.count} activities`} />))}
+                    </div>))}
+                  </div>
+                  <div className="flex items-center gap-2 mt-4 text-[10px] text-white/40"><span>Less</span>{HEATMAP_COLORS.map((c, i) => (<div key={i} className="w-3 h-3 rounded-sm" style={{ backgroundColor: c }} />))}<span>More</span></div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <div className="grid grid-cols-2 gap-4">
+                  {[{ icon: Zap, color: 'text-emerald-400', label: 'Total Focus', value: `${totalFocusTime}m` },{ icon: CheckCircle2, color: 'text-blue-400', label: 'Tasks Done', value: totalTasks },{ icon: Trophy, color: 'text-indigo-400', label: 'Sessions', value: totalSessions },{ icon: ListTodo, color: 'text-amber-400', label: 'Sub-tasks', value: totalSubTasks }].map(item => (
+                    <div key={item.label} className="stat-card">
+                      <div className={`w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center mb-4`}><item.icon className={`w-6 h-6 ${item.color}`} /></div>
+                      <h3 className="text-white/40 text-xs uppercase tracking-widest mb-1">{item.label}</h3><p className="text-3xl font-bold">{item.value}</p>
+                    </div>
+                  ))}
+                </div>
+                <div className="floating-card p-6">
+                  <h3 className="text-lg font-medium flex items-center gap-2 mb-6"><BarChart3 className="w-5 h-5 text-white/40" />Weekly Activity</h3>
+                  <div className="h-[200px] w-full"><ResponsiveContainer width="100%" height="100%"><BarChart data={chartData}><CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} /><XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#ffffff30', fontSize: 10 }} dy={10} /><YAxis hide /><Bar dataKey="tasks" name="Activities" radius={[4, 4, 0, 0]} barSize={20}>{chartData.map((e, i) => (<Cell key={i} fill="#34d399" fillOpacity={0.8} />))}</Bar></BarChart></ResponsiveContainer></div>
+                </div>
+              </div>
+
+              <div className="floating-card p-6">
+                <div className="flex items-center justify-between mb-6"><h3 className="text-lg font-medium flex items-center gap-2"><LayoutList className="w-5 h-5 text-white/40" />Active Tasks</h3><button onClick={() => setView('tasks')} className="text-sm text-white/40 hover:text-white">View All <ArrowRight className="w-4 h-4 inline" /></button></div>
+                <div className="space-y-3 max-h-[300px] overflow-y-auto">
+                  {tasks.filter(t => !t.completed).slice(0, 5).map(task => {
+                    const prog = getTaskProgress(task);
+                    return (<div key={task.id} className="flex items-center gap-4 p-4 bg-white/5 rounded-2xl">
+                      <button onClick={() => toggleTask(task.id)}><Circle className="w-5 h-5 text-white/40 hover:text-white" /></button>
+                      <div className="flex-1"><span className="text-sm text-white/80 block">{task.text}</span>
+                        {prog.total > 0 && (<div className="flex items-center gap-2 mt-1"><div className="flex-1 h-1 bg-white/10 rounded-full"><div className="h-full bg-emerald-400" style={{ width: `${prog.percentage}%` }} /></div><span className="text-[10px] text-white/40">{prog.percentage}%</span></div>)}
+                      </div><span className={cn("px-2 py-1 rounded text-[10px] uppercase font-bold border", PRIORITY_COLORS[task.priority])}>{task.priority}</span>
+                    </div>);
+                  })}
+                  {tasks.filter(t => !t.completed).length === 0 && <div className="text-center py-8 text-white/30"><p>No active tasks</p></div>}
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {view === 'timer' && (
+            <motion.div key="timer" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+              <section className="lg:col-span-7 flex flex-col items-center">
+                <div className="w-full timer-card">
+                  <div className="absolute bottom-0 left-0 h-1 bg-white/5 w-full rounded-b-[40px]"><motion.div className="h-full bg-gradient-to-r from-blue-500 to-purple-500" initial={{ width: 0 }} animate={{ width: `${progress}%` }} transition={{ duration: 0.5 }} /></div>
+                  <div className="flex justify-center gap-2 mb-12">
+                    {(Object.keys(MODES) as TimerMode[]).map(m => (<button key={m} onClick={() => setMode(m)} className={cn("px-4 py-2 rounded-full text-sm font-medium flex items-center gap-2", mode === m ? 'bg-white text-black' : 'text-white/40 hover:text-white/70 hover:bg-white/5')}>{MODES[m].icon}{MODES[m].label}</button>))}
+                  </div>
+                  <div className="text-center mb-12">
+                    <motion.div key={timeLeft} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="text-8xl md:text-[120px] font-mono font-light tracking-tighter timer-glow">{formatTime(timeLeft)}</motion.div>
+                    <p className={cn("text-sm uppercase tracking-[0.2em] font-medium mt-4", MODES[mode].color)}>{isActive ? 'Deep Focus' : 'Ready to start?'}</p>
+                  </div>
+                  <div className="flex items-center justify-center gap-6">
+                    <button onClick={resetTimer} className="p-4 rounded-2xl bg-white/5 hover:bg-white/10 text-white/60 hover:text-white"><RotateCcw className="w-6 h-6" /></button>
+                    <button onClick={toggleTimer} className="w-20 h-20 rounded-3xl bg-white text-black flex items-center justify-center hover:scale-105 shadow-[0_0_30px_rgba(255,255,255,0.15)]">{isActive ? <Pause className="w-8 h-8" /> : <Play className="w-8 h-8 ml-1" />}</button>
+                    <div className="w-14 h-14" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-4 w-full mt-8">
+                  {[{ label: 'Sessions', value: totalSessions },{ label: 'Focus Time', value: `${totalFocusTime}m` },{ label: 'Tasks', value: totalTasks }].map(s => (<div key={s.label} className="stat-card"><p className="text-[10px] uppercase tracking-widest text-white/30 mb-1">{s.label}</p><p className="text-lg font-semibold">{s.value}</p></div>))}
+                </div>
+              </section>
+              <section className="lg:col-span-5 space-y-4">
+                <div className="floating-card p-4">
+                  <div className="flex items-center gap-2 mb-3"><Plus className="w-4 h-4 text-white/40" /><span className="text-sm font-medium">Quick Add Task</span></div>
+                  <form onSubmit={e => { e.preventDefault(); if (newTaskText.trim()) { const newTask: Task = { id: crypto.randomUUID(), text: newTaskText.trim(), completed: false, priority: newTaskPriority, createdAt: Date.now(), dueDate: newTaskDueDate || undefined, subTasks: timerNewSubTasks.filter(st => st.trim()).map(st => ({ id: crypto.randomUUID(), text: st.trim(), completed: false, createdAt: Date.now() })) }; setTasks([newTask, ...tasks]); setNewTaskText(''); setNewTaskPriority('medium'); setNewTaskDueDate(''); setTimerNewSubTasks([]); }}} className="space-y-2">
+                    <input type="text" value={newTaskText} onChange={e => setNewTaskText(e.target.value)} placeholder="Add a task..." className="task-input w-full" />
+                    <div className="space-y-2">
+                      <div className="flex gap-2">
+                        <input type="text" value={timerNewSubTask} onChange={e => setTimerNewSubTask(e.target.value)} onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addTimerSubTask())} placeholder="Add sub-tasks (press Enter)" className="task-input flex-1 text-xs" />
+                        <button type="button" onClick={addTimerSubTask} className="px-3 py-2 bg-white/10 hover:bg-white/20 rounded-xl"><Plus className="w-4 h-4" /></button>
+                      </div>
+                      {timerNewSubTasks.length > 0 && (
+                        <div className="flex flex-wrap gap-2">
+                          {timerNewSubTasks.map((st, i) => (<motion.span key={i} initial={{ scale: 0 }} animate={{ scale: 1 }} className="inline-flex items-center gap-1 px-2 py-1 bg-white/10 rounded-full text-xs">{st}<button type="button" onClick={() => removeTimerSubTask(i)} className="hover:text-red-400"><X className="w-3 h-3" /></button></motion.span>))}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex gap-2">
+                      <select value={newTaskPriority} onChange={e => setNewTaskPriority(e.target.value as Priority)} className="flex-1 bg-white/5 border border-white/10 rounded-xl py-2 px-3 text-xs text-white/60">
+                        <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>
+                      </select>
+                      <button type="button" onClick={() => setShowTimerDatePicker(!showTimerDatePicker)} className="bg-white/5 border border-white/10 rounded-xl py-2 px-3 text-xs text-white/60 flex items-center gap-1">
+                        <Calendar className="w-3 h-3" />
+                      </button>
+                      <button type="submit" className="quick-add-btn">Add</button>
+                    </div>
+                    {showTimerDatePicker && (
+                      <div className="p-2 bg-[#1a1a1a] border border-white/10 rounded-xl">
+                        <input 
+                          type="date" 
+                          value={newTaskDueDate} 
+                          onChange={e => setNewTaskDueDate(e.target.value)}
+                          className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-white w-full"
+                        />
+                      </div>
+                    )}
+                  </form>
+                </div>
+                <div className="flex items-center justify-between mb-2"><div className="flex items-center gap-2"><LayoutList className="w-5 h-5 text-white/40" /><h2 className="text-lg font-medium">Active Tasks</h2></div><button onClick={() => setView('tasks')} className="text-sm text-white/40 hover:text-white">View All</button></div>
+                <div className="space-y-3 max-h-[350px] overflow-y-auto pr-1">
+                  <AnimatePresence>
+                    {tasks.filter(t => !t.completed).slice(0, 5).map(task => {
+                      const prog = getTaskProgress(task);
+                      const isExpanded = expandedTasks.has(task.id);
+                      const hasSubTasks = task.subTasks.length > 0;
+                      return (<motion.div key={task.id} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="floating-card p-3">
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => toggleTask(task.id)}>{task.completed ? <CheckCircle2 className="w-5 h-5 text-emerald-400" /> : <Circle className="w-5 h-5 text-white/40" />}</button>
+                          <div className="flex-1 min-w-0">
+                            <span className={cn("text-sm block truncate", task.completed ? 'text-white/30 line-through' : 'text-white/80')}>{task.text}</span>
+                            {hasSubTasks && (<div className="flex items-center gap-2 mt-1"><div className="flex-1 h-1 bg-white/10 rounded-full"><div className="h-full bg-emerald-400" style={{ width: `${prog.percentage}%` }} /></div><span className="text-[10px] text-white/40">{prog.percentage}%</span></div>)}
+                          </div>
+                          {hasSubTasks && <button onClick={() => toggleExpanded(task.id)} className="p-1 hover:bg-white/10 rounded">{isExpanded ? <ChevronUp className="w-4 h-4 text-white/40" /> : <ChevronDown className="w-4 h-4 text-white/40" />}</button>}
+                          <button onClick={() => deleteTask(task.id)} className="p-1.5 hover:bg-red-500/10 hover:text-red-400 rounded-lg"><Trash2 className="w-4 h-4" /></button>
+                        </div>
+                        <AnimatePresence>{isExpanded && hasSubTasks && (<motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden ml-7 mt-2 space-y-2">
+                          {task.subTasks.map((st, idx) => (<div key={st.id} className="flex items-center gap-2 p-2 bg-white/5 rounded-lg group">
+                            <button onClick={() => toggleSubTask(task.id, st.id)}>{st.completed ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <Circle className="w-4 h-4" />}</button>
+                            {editingSubTaskId === st.id ? (
+                              <input 
+                                type="text" 
+                                value={editingSubTaskText} 
+                                onChange={e => setEditingSubTaskText(e.target.value)} 
+                                onKeyDown={e => e.key === 'Enter' && saveSubTaskEdit(task.id, st.id)}
+                                onBlur={() => saveSubTaskEdit(task.id, st.id)}
+                                className="flex-1 bg-white/10 border border-white/20 rounded px-2 py-1 text-xs"
+                                autoFocus
+                              />
+                            ) : (
+                              <span className={cn("text-xs flex-1", st.completed ? 'text-white/30 line-through' : 'text-white/70')}>{st.text}</span>
+                            )}
+                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button onClick={() => reorderSubTask(task.id, st.id, 'up')} disabled={idx === 0} className="p-1 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed" title="Move up"><ChevronUp className="w-3 h-3" /></button>
+                              <button onClick={() => reorderSubTask(task.id, st.id, 'down')} disabled={idx === task.subTasks.length - 1} className="p-1 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed" title="Move down"><ChevronDown className="w-3 h-3" /></button>
+                              <button onClick={() => editSubTask(task.id, st.id)} className="p-1 hover:text-blue-400" title="Edit"><Settings className="w-3 h-3" /></button>
+                              <button onClick={() => deleteSubTask(task.id, st.id)} className="p-1 hover:text-red-400" title="Delete"><Trash2 className="w-3 h-3" /></button>
+                            </div>
+                          </div>))}
+                          <div className="flex gap-2"><input type="text" value={newSubTaskText[task.id] || ''} onChange={e => setNewSubTaskText(prev => ({ ...prev, [task.id]: e.target.value }))} onKeyDown={e => e.key === 'Enter' && addSubTask(task.id)} placeholder="Add sub-task..." className="flex-1 bg-white/5 border border-white/10 rounded-lg py-1.5 px-2 text-xs" /><button onClick={() => addSubTask(task.id)} className="p-1.5 bg-white/10 rounded-lg"><Plus className="w-3 h-3" /></button></div>
+                        </motion.div>)}</AnimatePresence>
+                      </motion.div>);
+                    })}
+                  </AnimatePresence>
+                </div>
+              </section>
+            </motion.div>
+          )}
+
+          {view === 'tasks' && (
+            <motion.div key="tasks" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+              <div className="flex items-center gap-2 mb-6"><LayoutList className="w-5 h-5 text-white/40" /><h2 className="text-xl font-medium">Tasks</h2><span className="text-sm text-white/40">({tasks.filter(t => !t.completed).length} active)</span></div>
+              <form onSubmit={addTask} className="space-y-3">
+                <div className="relative">
+                  <input type="text" value={newTaskText} onChange={e => setNewTaskText(e.target.value)} placeholder="Add a new task..." className="task-input w-full" />
+                  <Plus className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/20" />
+                </div>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setShowTasksDatePicker(!showTasksDatePicker)} className="flex-1 bg-white/5 border border-white/10 rounded-xl py-2 px-3 text-sm text-left text-white/60 flex items-center justify-between">
+                    <span>{newTaskDueDate ? new Date(newTaskDueDate).toLocaleDateString() : 'Select date'}</span><Calendar className="w-4 h-4" />
+                  </button>
+                  {showTasksDatePicker && (
+                    <div className="absolute z-50 mt-1 p-4 bg-[#1a1a1a] border border-white/10 rounded-xl shadow-xl">
+                      <input 
+                        type="date" 
+                        value={newTaskDueDate} 
+                        onChange={e => { setNewTaskDueDate(e.target.value); setShowTasksDatePicker(false); }}
+                        className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white"
+                      />
+                    </div>
+                  )}
+                  {(['low', 'medium', 'high'] as Priority[]).map(p => (<button key={p} type="button" onClick={() => setNewTaskPriority(p)} className={cn("flex-1 py-2 rounded-xl text-[10px] uppercase font-bold border", newTaskPriority === p ? PRIORITY_COLORS[p] : "bg-white/5 text-white/20")}>{p}</button>))}
+                </div>
+              </form>
+              <div className="space-y-3">
+                <AnimatePresence>
+                  {tasks.length === 0 ? (<motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-center py-12 floating-card">No tasks yet.</motion.div>) : (
+                    tasks.sort((a, b) => { const p = { high: 3, medium: 2, low: 1 }; return p[b.priority] - p[a.priority]; }).map(task => {
+                      const prog = getTaskProgress(task), isExpanded = expandedTasks.has(task.id), hasSubTasks = task.subTasks.length > 0;
+                      return (<motion.div key={task.id} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="group">
+                        <div className="flex items-center gap-4 p-4 floating-card">
+                          <button onClick={() => toggleTask(task.id)}>{task.completed ? <CheckCircle2 className="w-5 h-5 text-emerald-400" /> : <Circle className="w-5 h-5 text-white/40" />}</button>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1"><span className={cn("px-1.5 py-0.5 rounded text-[8px] uppercase font-bold border", PRIORITY_COLORS[task.priority])}>{task.priority}</span></div>
+                            <span className={cn("text-sm block truncate", task.completed ? 'text-white/30 line-through' : 'text-white/80')}>{task.text}</span>
+                            {hasSubTasks && (<div className="mt-2"><div className="flex items-center justify-between text-[10px] text-white/40 mb-1"><span>Sub-tasks</span><span>{prog.completed}/{prog.total} ({prog.percentage}%)</span></div><div className="h-1 bg-white/10 rounded-full overflow-hidden"><motion.div className="h-full bg-emerald-400" initial={{ width: 0 }} animate={{ width: `${prog.percentage}%` }} /></div></div>)}
+                          </div>
+                          {hasSubTasks && <button onClick={() => toggleExpanded(task.id)} className="p-2 hover:bg-white/10 rounded-lg">{isExpanded ? <ChevronUp className="w-4 h-4 text-white/40" /> : <ChevronDown className="w-4 h-4 text-white/40" />}</button>}
+                          <button onClick={() => deleteTask(task.id)} className="opacity-0 group-hover:opacity-100 p-2 hover:bg-red-500/10 hover:text-red-400 rounded-lg"><Trash2 className="w-4 h-4" /></button>
+                        </div>
+                        <AnimatePresence>{isExpanded && hasSubTasks && (<motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden ml-11 mt-2 space-y-2">
+                          {task.subTasks.map((st, idx) => (<div key={st.id} className="flex items-center gap-2 p-3 bg-white/5 rounded-xl group">
+                            <button onClick={() => toggleSubTask(task.id, st.id)}>{st.completed ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <Circle className="w-4 h-4" />}</button>
+                            {editingSubTaskId === st.id ? (
+                              <input 
+                                type="text" 
+                                value={editingSubTaskText} 
+                                onChange={e => setEditingSubTaskText(e.target.value)} 
+                                onKeyDown={e => e.key === 'Enter' && saveSubTaskEdit(task.id, st.id)}
+                                onBlur={() => saveSubTaskEdit(task.id, st.id)}
+                                className="flex-1 bg-white/10 border border-white/20 rounded-lg px-2 py-1 text-sm"
+                                autoFocus
+                              />
+                            ) : (
+                              <span className={cn("text-sm flex-1", st.completed ? 'text-white/30 line-through' : 'text-white/70')}>{st.text}</span>
+                            )}
+                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button onClick={() => reorderSubTask(task.id, st.id, 'up')} disabled={idx === 0} className="p-1 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed" title="Move up"><ChevronUp className="w-3 h-3" /></button>
+                              <button onClick={() => reorderSubTask(task.id, st.id, 'down')} disabled={idx === task.subTasks.length - 1} className="p-1 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed" title="Move down"><ChevronDown className="w-3 h-3" /></button>
+                              <button onClick={() => editSubTask(task.id, st.id)} className="p-1 hover:text-blue-400" title="Edit"><Settings className="w-3 h-3" /></button>
+                              <button onClick={() => deleteSubTask(task.id, st.id)} className="p-1 hover:text-red-400" title="Delete"><Trash2 className="w-3 h-3" /></button>
+                            </div>
+                          </div>))}
+                          <div className="flex gap-2"><input type="text" value={newSubTaskText[task.id] || ''} onChange={e => setNewSubTaskText(prev => ({ ...prev, [task.id]: e.target.value }))} onKeyDown={e => e.key === 'Enter' && addSubTask(task.id)} placeholder="Add sub-task..." className="flex-1 bg-white/5 border border-white/10 rounded-xl py-2 px-3 text-sm" /><button onClick={() => addSubTask(task.id)} className="p-2 bg-white/10 rounded-xl"><Plus className="w-4 h-4" /></button></div>
+                        </motion.div>)}</AnimatePresence>
+                      </motion.div>);
+                    })
+                  )}
+                </AnimatePresence>
+              </div>
+            </motion.div>
+          )}
+
+          {view === 'calendar' && (
+            <motion.div key="calendar" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="h-[calc(100vh-200px)] min-h-[600px]">
+              <div className="floating-card p-6 h-full">
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex items-center gap-4">
+                    <h3 className="text-xl font-semibold">{calendarDate.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</h3>
+                    <button onClick={goToToday} className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-xs font-medium">Today</button>
+                    <button onClick={() => navigateCalendar('prev')} className="p-2 hover:bg-white/5 rounded-lg"><ChevronLeft className="w-5 h-5" /></button><button onClick={() => navigateCalendar('next')} className="p-2 hover:bg-white/5 rounded-lg"><ChevronRight className="w-5 h-5" /></button>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <div className="text-sm font-mono text-white/60">{currentTime.toLocaleTimeString()}</div>
+                    <div className="flex gap-2 bg-white/5 rounded-xl p-1">{(['day', 'week', 'month'] as CalendarView[]).map(v => (<button key={v} onClick={() => setCalendarView(v)} className={cn("px-4 py-2 rounded-lg text-sm font-medium", calendarView === v ? "bg-white text-black" : "text-white/60 hover:text-white")}>{v}</button>))}</div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-7 gap-2 mb-2">{['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (<div key={d} className="text-center text-xs font-medium text-white/40 uppercase py-2">{d}</div>))}</div>
+                {calendarView === 'month' && (
+                  <div className="grid grid-cols-7 gap-2 flex-1">
+                    {getDaysInMonth(calendarDate).map((day, i) => {
+                      const isToday = day.date === getToday();
+                      return (<div key={i} onClick={() => { addTaskForDate(day.date); setView('tasks'); }} className={cn("p-2 rounded-xl cursor-pointer transition-all min-h-[80px] hover:bg-white/5", !day.isCurrentMonth && "opacity-30", isToday && "bg-white/10 ring-1 ring-white/30")}>
+                        <div className="flex items-center justify-between mb-1"><span className={cn("text-sm font-medium", isToday ? "text-white" : "text-white/60")}>{day.day}</span>{day.tasks.length > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/10">{day.tasks.filter(t => t.completed).length}/{day.tasks.length}</span>}</div>
+                        {day.tasks.slice(0, 2).map(t => (<div key={t.id} className={cn("text-[10px] px-1.5 py-0.5 rounded truncate", t.completed ? "bg-emerald-500/10 text-emerald-400/60 line-through" : "bg-white/5 text-white/80")}>{t.text}</div>))}
+                        {day.tasks.length > 2 && <div className="text-[10px] text-white/40">+{day.tasks.length - 2} more</div>}
+                      </div>);
+                    })}
+                  </div>
+                )}
+                {calendarView === 'day' && (
+                  <div className="space-y-2">
+                    <div className="p-4 rounded-xl bg-white/5 mb-4">
+                      <div className="text-3xl font-mono font-light mb-2">{currentTime.toLocaleTimeString()}</div>
+                      <div className="text-white/60">{calendarDate.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</div>
+                    </div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium text-white/60">Tasks for today</span>
+                      <button onClick={() => { addTaskForDate(getToday()); setView('tasks'); }} className="text-xs px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg flex items-center gap-1"><Plus className="w-3 h-3" /> Add Task</button>
+                    </div>
+                    {tasks.filter(t => t.dueDate === getToday()).length === 0 ? (
+                      <div className="text-center py-8 text-white/30">No tasks for today</div>
+                    ) : (
+                      tasks.filter(t => t.dueDate === getToday()).map(task => {
+                        const prog = getTaskProgress(task);
+                        const hasSubTasks = task.subTasks.length > 0;
+                        return (<div key={task.id} className="p-3 rounded-xl bg-white/5 hover:bg-white/10 transition-colors">
+                          <div className="flex items-center gap-3">
+                            <button onClick={() => toggleTask(task.id)}>{task.completed ? <CheckCircle2 className="w-5 h-5 text-emerald-400" /> : <Circle className="w-5 h-5 text-white/40" />}</button>
+                            <span className={cn("flex-1 text-sm", task.completed ? 'text-white/30 line-through' : 'text-white/80')}>{task.text}</span>
+                            <span className={cn("px-2 py-0.5 rounded text-[10px] uppercase font-bold border", PRIORITY_COLORS[task.priority])}>{task.priority}</span>
+                          </div>
+                          {hasSubTasks && (<div className="mt-2 ml-8"><div className="flex items-center gap-2 mb-1"><div className="flex-1 h-1 bg-white/10 rounded-full"><div className="h-full bg-emerald-400" style={{ width: `${prog.percentage}%` }} /></div><span className="text-[10px] text-white/40">{prog.completed}/{prog.total}</span></div></div>)}
+                        </div>);
+                      })
+                    )}
+                  </div>
+                )}
+                {calendarView === 'week' && (
+                  <div className="grid grid-cols-7 gap-2 flex-1">
+                    {Array.from({ length: 7 }, (_, i) => {
+                      const d = new Date(calendarDate);
+                      d.setDate(d.getDate() - d.getDay() + i);
+                      const dateStr = d.toISOString().split('T')[0];
+                      const dayTasks = tasks.filter(t => t.dueDate === dateStr);
+                      const isToday = dateStr === getToday();
+                      return (<div key={i} className={cn("p-2 rounded-xl min-h-[150px] hover:bg-white/5 transition-colors", isToday && "bg-white/10")}>
+                        <div className="text-center mb-2"><span className={cn("text-xs font-medium", isToday ? "text-white" : "text-white/40")}>{d.toLocaleDateString(undefined, { weekday: 'short' })}</span></div>
+                        <div className={cn("text-lg font-medium text-center mb-2", isToday ? "text-white" : "text-white/60")}>{d.getDate()}</div>
+                        {dayTasks.slice(0, 3).map(t => (<div key={t.id} onClick={() => { toggleTask(t.id); }} className={cn("text-[10px] px-1.5 py-1 rounded truncate cursor-pointer mb-1", t.completed ? "bg-emerald-500/10 text-emerald-400/60 line-through" : "bg-white/5 text-white/80 hover:bg-white/10")}>{t.text}</div>))}
+                        {dayTasks.length > 3 && <div className="text-[10px] text-white/40 text-center">+{dayTasks.length - 3} more</div>}
+                      </div>);
+                    })}
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {showSettings && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowSettings(false)} className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
+              <motion.div initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }} className="relative w-full max-w-md floating-card p-8">
+                <div className="flex justify-between items-center mb-8"><h2 className="text-xl font-semibold">Settings</h2><button onClick={() => setShowSettings(false)} className="p-2 hover:bg-white/5 rounded-full"><X className="w-5 h-5 text-white/40" /></button></div>
+                <div className="space-y-6">
+                  <div><label className="text-[10px] uppercase tracking-widest font-bold text-white/30 block mb-4">Notification Sound</label>
+                    <div className="space-y-2">{[...DEFAULT_SOUNDS, ...customSounds].map(sound => (<button key={sound.id} onClick={() => { setSelectedSound(sound); new Audio(sound.url).play(); }} className={cn("w-full flex items-center justify-between p-4 rounded-2xl border transition-all", selectedSound.id === sound.id ? "bg-white text-black border-white" : "bg-white/5 border-white/10 text-white/60 hover:bg-white/10")}><div className="flex items-center gap-3"><Volume2 className="w-4 h-4" /><span className="text-sm font-medium">{sound.name}</span></div>{selectedSound.id === sound.id && <CheckCircle2 className="w-4 h-4" />}</button>))}</div>
+                  </div>
+                  <div><label className="text-[10px] uppercase tracking-widest font-bold text-white/30 block mb-4">Upload Custom Sound</label>
+                    <label className="w-full flex flex-col items-center justify-center p-8 border-2 border-dashed border-white/10 rounded-[32px] hover:bg-white/5 transition-all cursor-pointer group"><Upload className="w-8 h-8 text-white/20 group-hover:text-white/40 mb-2" /><span className="text-sm text-white/40 group-hover:text-white/60">Choose audio file</span><input type="file" accept="audio/*" onChange={handleSoundUpload} className="hidden" /></label>
+                  </div>
+                </div>
+                <button onClick={() => setShowSettings(false)} className="w-full mt-12 py-4 bg-white text-black rounded-2xl font-bold text-sm hover:scale-[1.02] transition-all">Done</button>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+}
