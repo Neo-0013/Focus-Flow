@@ -42,6 +42,28 @@ export function DashboardView({
   const [showHabitModal, setShowHabitModal] = useState(false);
   const [newHabitTitle, setNewHabitTitle] = useState('');
 
+  // Daily Focus Streak Calculation
+  const focusStreak = React.useMemo(() => {
+    const focusByDay = new Map<string, number>();
+    focusSessions.filter(s => s.mode === 'work').forEach(s => {
+      const d = new Date(s.completedAt).toDateString();
+      focusByDay.set(d, (focusByDay.get(d) || 0) + Math.round(s.duration / 60));
+    });
+
+    let streak = 0;
+    const checkDate = new Date();
+    // Start from today or yesterday
+    if ((focusByDay.get(checkDate.toDateString()) || 0) < dailyGoalMinutes) {
+       checkDate.setDate(checkDate.getDate() - 1);
+    }
+    
+    while (focusByDay.has(checkDate.toDateString()) && (focusByDay.get(checkDate.toDateString()) || 0) >= dailyGoalMinutes) {
+      streak++;
+      checkDate.setDate(checkDate.getDate() - 1);
+    }
+    return streak;
+  }, [focusSessions, dailyGoalMinutes]);
+
   const saveHabit = async () => {
     if (!newHabitTitle.trim()) return;
     await axios.post(`${API_BASE}/habits`, { title: newHabitTitle, workspaceId: workspace });
@@ -76,9 +98,12 @@ export function DashboardView({
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2 text-white/60 text-sm font-medium"><Plus className="w-4 h-4" /> Quick Add Task</div>
             <div className="flex items-center gap-3">
-               <div className="text-right">
+                <div className="text-right">
                   <p className="text-[10px] uppercase tracking-widest text-white/20 font-bold">Daily Work Goal</p>
-                  <p className="text-xs font-bold text-white/60">{focusedTodayMinutes} / {dailyGoalMinutes}m</p>
+                  <div className="flex items-center gap-2 justify-end">
+                    {focusStreak > 0 && <span className="text-[10px] font-black text-orange-500 flex items-center gap-0.5"><Flame className="w-3 h-3"/> {focusStreak} Day Streak</span>}
+                    <p className="text-xs font-bold text-white/60">{focusedTodayMinutes} / {dailyGoalMinutes}m</p>
+                  </div>
                </div>
                <div className="w-32 h-2 bg-white/5 rounded-full overflow-hidden border border-white/5 relative">
                   <motion.div 
@@ -232,6 +257,24 @@ export function DashboardView({
               <p className="text-[10px] uppercase tracking-widest text-white/40 font-bold">{stat.label}</p>
             </div>
           ))}
+          
+          <div className="col-span-2 bg-gradient-to-br from-indigo-500/10 to-purple-500/10 border border-white/5 rounded-2xl p-5 flex items-center gap-4">
+             <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center text-indigo-400"><Trophy className="w-6 h-6" /></div>
+             <div className="flex-1">
+                <p className="text-[10px] uppercase tracking-widest text-white/40 font-bold mb-1">Weekly Report</p>
+                <p className="text-xs font-medium text-white/60">You've completed <span className="text-white font-bold">{focusSessions.filter(s=>s.mode==='work' && isSameWeek(new Date(s.completedAt), new Date())).length}</span> sessions this week. Best day: <span className="text-white font-bold">{(() => {
+                  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+                  const map = new Map();
+                  focusSessions.forEach(s => {
+                    const d = new Date(s.completedAt).getDay();
+                    map.set(d, (map.get(d)||0) + s.duration);
+                  });
+                  let max = -1, day = 'N/A';
+                  map.forEach((v,k) => { if(v>max){ max=v; day=days[k]; } });
+                  return day;
+                })()}</span></p>
+             </div>
+          </div>
         </div>
 
         <div className="lg:col-span-8 bg-panel border border-white/5 rounded-2xl p-6 shadow-2xl flex flex-col">

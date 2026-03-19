@@ -61,6 +61,11 @@ try { db.exec("UPDATE habits SET workspaceId = 'Personal' WHERE workspaceId IS N
 try { db.exec("ALTER TABLE tasks ADD COLUMN status TEXT DEFAULT 'todo'"); } catch(e){}
 try { db.exec("UPDATE tasks SET status = 'todo' WHERE status IS NULL"); } catch(e){}
 try { db.exec("ALTER TABLE tasks ADD COLUMN archived INTEGER DEFAULT 0"); } catch(e){}
+try { db.exec("ALTER TABLE tasks ADD COLUMN timeSlot TEXT"); } catch(e){}
+
+// Performance: Auto-archive completed tasks older than 30 days
+const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
+db.prepare('UPDATE tasks SET archived = 1 WHERE completed = 1 AND archived = 0 AND createdAt < ?').run(thirtyDaysAgo);
 
 try {
   db.exec(`
@@ -181,6 +186,14 @@ app.post('/focus-sessions', (req, res) => {
   const { workspaceId, mode, duration, completedAt } = req.body;
   db.prepare('INSERT INTO focus_sessions (id, workspaceId, mode, duration, completedAt) VALUES (?, ?, ?, ?, ?)').run(crypto.randomUUID(), workspaceId || 'Personal', mode, duration, completedAt);
   res.json({ success: true });
+});
+
+app.get('/focus-sessions/today', (req, res) => {
+  const { workspace } = req.query;
+  const startOfDay = new Date();
+  startOfDay.setHours(0,0,0,0);
+  const row = db.prepare('SELECT SUM(duration) as total FROM focus_sessions WHERE workspaceId = ? AND mode = "work" AND completedAt >= ?').get(workspace || 'Personal', startOfDay.getTime());
+  res.json({ totalMinutes: Math.round((row.total || 0) / 60) });
 });
 
 // Journal Endpoints
@@ -538,6 +551,7 @@ app.post('/tasks/archive-completed', (req, res) => {
   res.json({ success: true });
 });
 
-app.listen(PORT, () => {
+const PORT = process.env.PORT || 3002;
+httpServer.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
