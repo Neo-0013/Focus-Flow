@@ -1,10 +1,10 @@
 export type TimerMode = 'work' | 'shortBreak' | 'longBreak';
 export type Priority = 'low' | 'medium' | 'high';
 export type CalendarView = 'day' | 'week' | 'month';
-export type AppView = 'dashboard' | 'timer' | 'tasks' | 'calendar' | 'goals' | 'journal' | 'board';
+export type AppView = 'dashboard' | 'timer' | 'tasks' | 'calendar' | 'goals' | 'journal' | 'board' | 'performance' | 'strategy' | 'network' | 'settings' | 'advanced_tasks';
 export type GoalType = 'weekly' | 'monthly' | 'yearly';
 export type GoalCategory = 'Health' | 'Career' | 'Finance' | 'Education' | 'Personal';
-export type Theme = 'light' | 'dark' | 'system';
+export type Theme = 'light' | 'dark' | 'system' | 'midnight' | 'nordic';
 export type Workspace = 'Personal' | 'Work' | 'Project';
 
 export interface SubTask {
@@ -25,10 +25,21 @@ export interface Task {
   createdAt: number;
   dueDate?: string;
   timeSlot?: string;
+  recurrenceInterval?: number;
+  recurrenceUnit?: string;
+  recurrenceEnds?: string;
+  recurrenceEndDate?: string;
+  recurrenceEndOccurrences?: number;
+  recurrenceCount?: number;
   parentId?: string;
   subTasks: SubTask[];
   goalId?: string;
+  workspaceId?: string;
   archived: number;
+  importance: number;
+  urgency: number;
+  cognitiveCost: number;
+  dependencyIds: string[];
 }
 
 export interface Habit {
@@ -43,6 +54,11 @@ export interface Profile {
   id: number;
   xp: number;
   level: number;
+  aiProtocol?: 'gentle' | 'strategic' | 'hardcore';
+  themeOpacity?: number;
+  glowIntensity?: number;
+  telemetryMasking?: boolean;
+  stealthMode?: boolean;
 }
 
 export interface Achievement {
@@ -51,11 +67,22 @@ export interface Achievement {
   unlockedAt: number;
 }
 
+export interface JournalAttachment {
+  name: string;
+  url: string;
+  mimetype: string;
+  size: number;
+}
+
 export interface JournalEntry {
   id: string;
   workspaceId: Workspace;
   date: string;
   content: string;
+  folder?: string;
+  title?: string;
+  tags?: string[];
+  attachments?: JournalAttachment[];
 }
 
 export interface Goal {
@@ -77,4 +104,19 @@ export interface SoundOption {
   id: string;
   name: string;
   url: string;
+}
+
+export interface NeuralSector {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  baseTime: number; // in minutes
+  activeNodes: number;
+}
+
+export interface NeuralNode {
+  id: string;
+  sectorId: string;
+  joinedAt: number;
 }

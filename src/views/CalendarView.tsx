@@ -1,10 +1,10 @@
 import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Circle, CheckCircle2, Zap } from 'lucide-react';
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, X, Circle, CheckCircle2, Zap, Repeat } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, eachDayOfInterval, isSameMonth, isSameDay, addMonths, subMonths } from 'date-fns';
 import { cn } from '../utils';
-import { Task, Priority } from '../types';
+import { Task, Priority, AppView } from '../types';
 import axios from 'axios';
 
 const API_BASE = 'http://localhost:3002';
@@ -18,7 +18,7 @@ const PRIORITY_COLORS: Record<Priority, string> = {
 interface CalendarProps {
   tasks: Task[];
   currentTime: Date;
-  setView: (v: string) => void;
+  setView: (v: AppView) => void;
   toggleTask: (id: string) => void;
   showToast: (title: string, body: string, type?: string) => void;
   focusSessions: any[];
@@ -35,6 +35,9 @@ export function CalendarView({ tasks, currentTime, setView, toggleTask, showToas
   const [modalTaskPriority, setModalTaskPriority] = useState<Priority>('medium');
   const [modalSubTask, setModalSubTask] = useState('');
   const [modalSubTasks, setModalSubTasks] = useState<string[]>([]);
+  const [modalRecurrence, setModalRecurrence] = useState<any>(null);
+  const [showRecurrenceModal, setShowRecurrenceModal] = useState(false);
+  const [tempRecurrence, setTempRecurrence] = useState<any>({ interval: 1, unit: 'day', ends: 'never' });
 
   const calendarDays = useMemo(() => {
     if (calendarView === 'month') {
@@ -75,6 +78,11 @@ export function CalendarView({ tasks, currentTime, setView, toggleTask, showToas
         createdAt: Date.now(),
         taskId: taskId
       })),
+      recurrenceInterval: modalRecurrence?.interval,
+      recurrenceUnit: modalRecurrence?.unit,
+      recurrenceEnds: modalRecurrence?.ends,
+      recurrenceEndDate: modalRecurrence?.endDate,
+      recurrenceEndOccurrences: modalRecurrence?.endOccurrences,
       archived: 0
     };
     try {
@@ -82,6 +90,7 @@ export function CalendarView({ tasks, currentTime, setView, toggleTask, showToas
       setModalTaskText('');
       setModalSubTasks([]);
       setModalSubTask('');
+      setModalRecurrence(null);
       setShowCalendarAddModal(null);
       showToast("Success", "Task added to calendar", "success");
     } catch {
@@ -333,11 +342,66 @@ export function CalendarView({ tasks, currentTime, setView, toggleTask, showToas
                     ))}
                   </div>
                 </div>
+
+                <div>
+                   <label className="text-[10px] uppercase tracking-widest text-white/20 font-bold mb-2 block">Repeat Schedule</label>
+                   <button type="button" onClick={() => {
+                       setTempRecurrence(modalRecurrence || { interval: 1, unit: 'day', ends: 'never' });
+                       setShowRecurrenceModal(true);
+                   }} className={cn("w-full py-3 rounded-xl border flex items-center justify-center gap-2 transition-all font-bold text-xs", modalRecurrence ? "bg-accent/20 border-accent/50 text-accent" : "bg-white/5 border-white/5 text-white/40 hover:text-white hover:border-white/20")}>
+                      <Repeat className="w-4 h-4" />
+                      {modalRecurrence ? `Repeats every ${modalRecurrence.interval} ${modalRecurrence.unit}(s)` : "Does not repeat"}
+                   </button>
+                </div>
+
                 <button onClick={handleCreateTask} className="w-full py-4 bg-accent text-white rounded-2xl font-bold text-sm shadow-xl hover:scale-[1.02] transition-all">
                   Create Task
                 </button>
               </div>
             </motion.div>
+          </div>
+        )}
+
+        {showRecurrenceModal && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-[#2a2a2a] rounded-2xl w-full max-w-sm shadow-2xl p-6 text-white text-sm">
+                <h3 className="text-lg font-bold mb-6">Repeats every</h3>
+                <div className="flex gap-4 mb-6">
+                   <input type="number" min="1" value={tempRecurrence.interval} onChange={e => setTempRecurrence({...tempRecurrence, interval: parseInt(e.target.value) || 1})} className="w-16 bg-[#3a3a3a] border-none rounded-lg p-3 focus:outline-none" />
+                   <select value={tempRecurrence.unit} onChange={e => setTempRecurrence({...tempRecurrence, unit: e.target.value})} className="flex-1 bg-[#3a3a3a] border-none rounded-lg p-3 focus:outline-none cursor-pointer">
+                      <option value="day">day</option>
+                      <option value="week">week</option>
+                      <option value="month">month</option>
+                      <option value="year">year</option>
+                   </select>
+                </div>
+
+                <div className="mb-6">
+                   <h3 className="text-white/60 mb-3 font-bold">Ends</h3>
+                   <div className="space-y-4">
+                      <label className="flex items-center gap-3 cursor-pointer">
+                         <input type="radio" name="ends" checked={tempRecurrence.ends === 'never'} onChange={() => setTempRecurrence({...tempRecurrence, ends: 'never'})} className="w-4 h-4 accent-blue-400" />
+                         <span>Never</span>
+                      </label>
+                      <label className="flex items-center gap-3 cursor-pointer">
+                         <input type="radio" name="ends" checked={tempRecurrence.ends === 'on'} onChange={() => setTempRecurrence({...tempRecurrence, ends: 'on', endDate: tempRecurrence.endDate || new Date().toISOString().split('T')[0]})} className="w-4 h-4 accent-blue-400" />
+                         <span className="w-16">On</span>
+                         <input type="date" value={tempRecurrence.endDate || ''} disabled={tempRecurrence.ends !== 'on'} onChange={e => setTempRecurrence({...tempRecurrence, endDate: e.target.value})} className={cn("flex-1 bg-[#3a3a3a] rounded-lg p-2 focus:outline-none text-xs", tempRecurrence.ends !== 'on' && "opacity-50 pointer-events-none")} />
+                      </label>
+                      <label className="flex items-center gap-3 cursor-pointer">
+                         <input type="radio" name="ends" checked={tempRecurrence.ends === 'after'} onChange={() => setTempRecurrence({...tempRecurrence, ends: 'after', endOccurrences: tempRecurrence.endOccurrences || 30})} className="w-4 h-4 accent-blue-400" />
+                         <span className="w-16">After</span>
+                         <input type="number" min="1" value={tempRecurrence.endOccurrences || ''} disabled={tempRecurrence.ends !== 'after'} onChange={e => setTempRecurrence({...tempRecurrence, endOccurrences: parseInt(e.target.value) || 1})} className={cn("w-16 bg-[#3a3a3a] rounded-lg p-2 focus:outline-none text-xs", tempRecurrence.ends !== 'after' && "opacity-50 pointer-events-none")} />
+                         <span className={cn(tempRecurrence.ends !== 'after' && "opacity-50")}>occurrences</span>
+                      </label>
+                   </div>
+                </div>
+
+                <div className="flex justify-end gap-3 font-bold">
+                   <button onClick={() => { setModalRecurrence(null); setShowRecurrenceModal(false); }} className="px-5 py-2 text-white hover:bg-white/10 rounded-full transition-all">Clear</button>
+                   <button onClick={() => { setModalRecurrence(tempRecurrence); setShowRecurrenceModal(false); }} className="px-6 py-2 bg-blue-300 text-blue-900 hover:bg-blue-200 rounded-full transition-all">Done</button>
+                </div>
+             </motion.div>
           </div>
         )}
 

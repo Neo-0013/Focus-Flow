@@ -1,14 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
+import { createRoot, Root } from 'react-dom/client';
 import { motion, AnimatePresence } from 'motion/react';
 import axios from 'axios';
 import { io, Socket } from 'socket.io-client';
 // @ts-ignore
 import confetti from 'canvas-confetti';
-import { X, Volume2, Check, Zap, Trophy, Flame, Download, Upload } from 'lucide-react';
-import { cn } from './utils';
+import { X, Volume2, Check, Zap, Trophy, Flame, Download, Upload, Settings } from 'lucide-react';
+import { cn, generateUUID } from './utils';
 import { Task, Goal, AppView, TimerMode, Theme, SoundOption, Priority, Habit, Profile, Workspace, Achievement } from './types';
 
 import { Sidebar } from './components/Sidebar';
+import { NeoChat } from './components/NeoChat';
 import { DashboardView } from './views/DashboardView';
 import { TimerView } from './views/TimerView';
 import { TasksView } from './views/TasksView';
@@ -16,6 +19,12 @@ import { CalendarView } from './views/CalendarView';
 import { GoalsView } from './views/GoalsView';
 import { JournalView } from './views/JournalView';
 import { BoardView } from './views/BoardView';
+import { PerformanceView } from './views/PerformanceView';
+import { StrategyView } from './views/StrategyView';
+import { UniversalHUD } from './components/UniversalHUD';
+import { NeuralSyncView } from './views/NeuralSyncView';
+import { AdvancedTasksView } from './views/AdvancedTasksView';
+import { SettingsView } from './views/SettingsView';
 
 const BADGES = [
   { id: 'early_bird', title: 'Early Bird', description: 'Complete a task before 8 AM', icon: Zap, color: 'text-amber-400' },
@@ -71,16 +80,32 @@ export default function App() {
     const saved = localStorage.getItem('onyx_selected_sound');
     return saved ? JSON.parse(saved) : DEFAULT_SOUNDS[0];
   });
+  const [aiConfig, setAiConfig] = useState(() => {
+    const saved = localStorage.getItem('onyx_ai_config');
+    return saved ? JSON.parse(saved) : { baseUrl: 'https://api.groq.com/openai/v1', apiKey: '', modelId: 'llama-3.1-8b-instant' };
+  });
   const [currentTime, setCurrentTime] = useState(new Date());
   const [showSettings, setShowSettings] = useState(false);
+  const [showUniversalHUD, setShowUniversalHUD] = useState(false);
+  const [isHUDDetached, setIsHUDDetached] = useState(false);
+  const [pipWindow, setPipWindow] = useState<any>(null);
+  const pipRootRef = useRef<Root | null>(null);
+  const [isNeoSpeaking, setIsNeoSpeaking] = useState(false);
+
 
   // Task Input State (Used across Dashboard, Timer, Tasks)
   const [dashboardNewTaskText, setDashboardNewTaskText] = useState('');
   const [dashboardNewTaskPriority, setDashboardNewTaskPriority] = useState<Priority>('medium');
-  const [dashboardNewSubTask, setDashboardNewSubTask] = useState('');
-  const [dashboardNewSubTasks, setDashboardNewSubTasks] = useState<string[]>([]);
   const [dashboardDueDate, setDashboardDueDate] = useState('');
+  const [dashboardRecurrence, setDashboardRecurrence] = useState<any>(null);
+  const [dashboardNewSubTask, setDashboardNewSubTask] = useState('');
+  const [activePomodoroTaskId, setActivePomodoroTaskId] = useState<string | undefined>(undefined);
+  const [dashboardNewSubTasks, setDashboardNewSubTasks] = useState<string[]>([]);
   const [dashboardNewTaskGoalId, setDashboardNewTaskGoalId] = useState('');
+  const [dashboardTimeSlot, setDashboardTimeSlot] = useState('');
+  const [dashboardImportance, setDashboardImportance] = useState(50);
+  const [dashboardUrgency, setDashboardUrgency] = useState(50);
+  const [dashboardCognitiveCost, setDashboardCognitiveCost] = useState(5);
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
 
   // Refs
@@ -106,8 +131,16 @@ export default function App() {
     try { const r = await axios.get(`${API_BASE}/timer-presets`); setTimerPresets(r.data); } catch(e) {}
   };
 
-  const onSessionComplete = async (mode: string, duration: number) => {
-    await axios.post(`${API_BASE}/focus-sessions`, { workspaceId: workspace, mode, duration, completedAt: Date.now() }).catch(() => {});
+  const onSessionComplete = async (mode: string, duration: number, taskId?: string) => {
+    try {
+      await axios.post(`${API_BASE}/focus-sessions`, {
+        workspaceId: workspace,
+        mode,
+        duration,
+        taskId,
+        completedAt: Date.now()
+      });
+    } catch(e) {}
     fetchFocusSessions();
     if (Notification.permission === 'granted') {
       new Notification('FocusFlow', { body: mode === 'work' ? '✅ Focus session done! Take a break.' : '⚡ Break done! Ready to focus?', icon: '/favicon.ico' });
@@ -176,7 +209,8 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('onyx_timer_durations', JSON.stringify(timerDurations));
     localStorage.setItem('onyx_selected_sound', JSON.stringify(selectedSound));
-  }, [timerDurations, selectedSound]);
+    localStorage.setItem('onyx_ai_config', JSON.stringify(aiConfig));
+  }, [timerDurations, selectedSound, aiConfig]);
 
   // Theme
   useEffect(() => {
@@ -279,7 +313,7 @@ export default function App() {
 
   // Toast System
   const showToast = (title: string, body: string, type: string = 'info') => {
-    const id = crypto.randomUUID();
+    const id = generateUUID();
     setToasts(prev => [...prev, { id, title, body, type }]);
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 5000);
   };
@@ -298,6 +332,7 @@ export default function App() {
         if (day === 0 || day === 6) checkAchievement('weekend_warrior');
       }
       await axios.patch(`${API_BASE}/tasks/${id}`, { completed: !task.completed });
+      await fetchTasks();
       showToast('Success', `Task marked as ${!task.completed ? 'completed' : 'active'}`, 'success');
     } catch (err) {
       showToast('Error', 'Failed to update task', 'error');
@@ -307,6 +342,7 @@ export default function App() {
   const deleteTask = async (id: string) => {
     try {
       await axios.delete(`${API_BASE}/tasks/${id}`);
+      await fetchTasks();
       showToast('Task deleted', 'Task has been removed');
     } catch (err) {
       showToast('Error', 'Failed to delete task', 'error');
@@ -317,33 +353,40 @@ export default function App() {
     if (e) e.preventDefault();
     if (!dashboardNewTaskText.trim()) return;
     
-    const taskId = crypto.randomUUID();
-    const newTask: Task = {
+    const taskId = generateUUID();
+    const payload = {
       id: taskId,
-      text: dashboardNewTaskText.trim(),
-      completed: false,
+      text: dashboardNewTaskText,
       priority: dashboardNewTaskPriority,
-      position: tasks.length,
-      createdAt: Date.now(),
-      dueDate: dashboardDueDate || undefined,
-      goalId: dashboardNewTaskGoalId || undefined,
+      dueDate: dashboardDueDate || null,
+      timeSlot: dashboardTimeSlot || null,
+      parentId: null,
       subTasks: dashboardNewSubTasks.map(st => ({
-        id: crypto.randomUUID(),
+        id: generateUUID(),
         text: st,
         completed: false,
         createdAt: Date.now(),
         taskId: taskId
       })),
-      archived: 0
+      goalId: dashboardNewTaskGoalId || null,
+      workspaceId: workspace,
+      recurrenceEnds: dashboardRecurrence?.ends,
+      recurrenceEndDate: dashboardRecurrence?.endDate,
+      recurrenceEndOccurrences: dashboardRecurrence?.endOccurrences,
+      importance: dashboardImportance,
+      urgency: dashboardUrgency,
+      cognitiveCost: dashboardCognitiveCost
     };
 
     try {
-      await axios.post(`${API_BASE}/tasks`, { ...newTask, workspaceId: workspace });
+      await axios.post(`${API_BASE}/tasks`, payload);
+      await fetchTasks();
       setDashboardNewTaskText('');
       setDashboardNewSubTasks([]);
-      setDashboardNewSubTask('');
-      setDashboardDueDate('');
       setDashboardNewTaskGoalId('');
+      setDashboardDueDate('');
+      setDashboardRecurrence(null);
+      addXP(10, 'Planned Ahead');
       showToast('Success', 'Task added successfully', 'success');
     } catch (err) {
       showToast('Error', 'Failed to add task', 'error');
@@ -367,6 +410,13 @@ export default function App() {
       if (mode === 'work') {
         confetti({ particleCount: 200, spread: 100, origin: { y: 0.5 } });
         addXP(50, 'Finished a Focus Session');
+        axios.post(`${API_BASE}/focus-sessions`, {
+          workspaceId: workspace,
+          mode: 'work',
+          duration: timerDurations.work * 60,
+          completedAt: Date.now(),
+          taskId: activePomodoroTaskId
+        }).then(() => fetchFocusSessions()).catch(console.error);
       }
       if (Notification.permission === 'granted') {
         new Notification('Timer Complete', { body: `${MODES_META[mode].label} finished!` });
@@ -384,6 +434,17 @@ export default function App() {
       fetchTasks();
       showToast("Archived", "Tasks moved to archive", "success");
     } catch (err) { showToast("Error", "Failed to archive", "error"); }
+  };
+
+  const initiateDeepShield = async () => {
+    setIsActive(true);
+    setView('timer');
+    showToast('Deep Shield Active', 'Focus Isolation Protocol initiated. All distractions cloaked.', 'success');
+    addXP(15, 'Isolation Protocol');
+    // Optionally auto-detach HUD
+    if ('documentPictureInPicture' in window && !isHUDDetached) {
+       handleDetachHUD();
+    }
   };
 
   const exportData = async () => {
@@ -420,6 +481,12 @@ export default function App() {
     const duration = mode === 'work' ? timerDurations.work : mode === 'shortBreak' ? timerDurations.shortBreak : timerDurations.longBreak;
     setTimeLeft(duration * 60);
     if (audioRef.current) audioRef.current.volume = 0.5;
+  };
+
+  const handleSkipNext = () => {
+    if (mode === 'work') setMode('shortBreak');
+    else if (mode === 'shortBreak') setMode('work');
+    else setMode('work');
   };
 
   const playNotificationSound = () => {
@@ -466,8 +533,20 @@ export default function App() {
     setDashboardNewTaskPriority,
     dashboardDueDate,
     setDashboardDueDate,
+    dashboardRecurrence,
+    setDashboardRecurrence,
     dashboardNewTaskGoalId,
     setDashboardNewTaskGoalId,
+    dashboardTimeSlot,
+    setDashboardTimeSlot,
+    dashboardImportance,
+    setDashboardImportance,
+    dashboardUrgency,
+    setDashboardUrgency,
+    dashboardCognitiveCost,
+    setDashboardCognitiveCost,
+    activePomodoroTaskId,
+    setActivePomodoroTaskId,
     handleAddTask,
     addDashboardSubTask,
     setView,
@@ -497,10 +576,92 @@ export default function App() {
     archiveCompletedTasks,
     exportData,
     importData,
+    aiConfig,
   };
 
+  const handleDetachHUD = async () => {
+    if (!('documentPictureInPicture' in window)) {
+      alert('Your browser does not support the System Overlay feature. Please use a recent version of Chrome/Edge.');
+      return;
+    }
+
+    try {
+      // @ts-ignore
+      const pip = await window.documentPictureInPicture.requestWindow({
+        width: 440,
+        height: 140,
+      });
+
+      // Inject styles more robustly
+      const styles = document.querySelectorAll('style, link[rel="stylesheet"]');
+      styles.forEach((el) => {
+        pip.document.head.appendChild(el.cloneNode(true));
+      });
+
+      // Set background and layout
+      pip.document.body.style.background = '#050808';
+      pip.document.body.style.margin = '0';
+      pip.document.body.style.display = 'flex';
+      pip.document.body.style.alignItems = 'center';
+      pip.document.body.style.justifyContent = 'center';
+      pip.document.body.style.height = '100vh';
+      pip.document.body.style.width = '100vw';
+      pip.document.title = 'Neo Focus HUD';
+
+      // Create a stable root for the React Portal
+      const root = pip.document.createElement('div');
+      root.id = 'pip-root';
+      root.style.width = '100%';
+      root.style.height = '100%';
+      root.style.display = 'flex';
+      root.style.alignItems = 'center';
+      root.style.justifyContent = 'center';
+      pip.document.body.appendChild(root);
+
+      // Initialize a separate React Root in the PiP window
+      const reactRoot = createRoot(pip.document.getElementById('pip-root')!);
+      pipRootRef.current = reactRoot;
+
+      setPipWindow(pip);
+      setIsHUDDetached(true);
+
+      // Handle window close
+      pip.addEventListener('pagehide', () => {
+        if (pipRootRef.current) {
+          pipRootRef.current.unmount();
+          pipRootRef.current = null;
+        }
+        setPipWindow(null);
+        setIsHUDDetached(false);
+      });
+    } catch (e) {
+      console.error('Failed to open PiP window:', e);
+    }
+  };
+
+  const activeTask = tasks.find(t => t.id === activePomodoroTaskId) || tasks.find(t => !t.completed && !t.archived);
+
+  // Update PiP window React tree whenever state changes
+  useEffect(() => {
+    if (isHUDDetached && pipRootRef.current) {
+      pipRootRef.current.render(
+        <UniversalHUD 
+          timeLeft={timeLeft}
+          isActive={isActive}
+          mode={mode}
+          toggleTimer={() => setIsActive(!isActive)}
+          skipNext={handleSkipNext}
+          totalDuration={mode === 'work' ? timerDurations.work * 60 : mode === 'shortBreak' ? timerDurations.shortBreak * 60 : timerDurations.longBreak * 60}
+          isNeoSpeaking={isNeoSpeaking}
+          activeTask={activeTask}
+          isDetached={true}
+        />
+      );
+    }
+  }, [isHUDDetached, timeLeft, isActive, mode, isNeoSpeaking, activeTask, timerDurations]);
+
   return (
-    <div className="min-h-screen bg-app text-white font-sans selection:bg-white/20 flex flex-col md:flex-row overflow-hidden">
+    <div className={cn("h-screen w-screen bg-app text-white font-sans selection:bg-white/20 flex flex-col md:flex-row overflow-hidden relative", `theme-${theme}`)}>
       <audio ref={audioRef} src={selectedSound.url} />
 
       <Sidebar 
@@ -531,7 +692,9 @@ export default function App() {
               { id: 'dashboard', label: 'Dashboard' },
               { id: 'timer', label: 'Timer' },
               { id: 'tasks', label: 'Tasks' },
+              { id: 'advanced_tasks', label: 'Architect' },
               { id: 'calendar', label: 'Calendar' },
+              { id: 'board', label: 'Board' },
             ].map(item => (
               <button
                 key={item.id}
@@ -545,7 +708,15 @@ export default function App() {
               </button>
             ))}
           </div>
-          <div className="w-8 h-8" />
+          <div className="flex items-center gap-4 justify-end">
+            <button onClick={() => setShowUniversalHUD(!showUniversalHUD)} className={cn("transition-colors flex items-center gap-2", showUniversalHUD ? "text-focus-cyan" : "text-white/40 hover:text-white")} title="Toggle Universal HUD">
+               <span className="material-symbols-outlined text-[20px]">timer</span>
+               <span className="text-xs font-bold uppercase tracking-widest hidden lg:block">HUD</span>
+            </button>
+            <button onClick={() => setView('settings')} className={cn("transition-colors flex items-center gap-2", view === 'settings' ? "text-focus-cyan" : "text-white/40 hover:text-white")} title="Architect Control">
+               <Settings className="w-5 h-5" />
+            </button>
+          </div>
         </header>
 
         <AnimatePresence mode="wait">
@@ -554,8 +725,23 @@ export default function App() {
           {view === 'calendar' && <CalendarView {...viewProps} focusSessions={focusSessions} />}
           {view === 'goals' && <GoalsView {...viewProps} />}
           {view === 'tasks' && <TasksView {...viewProps} />}
-          {view === 'journal' && <JournalView workspace={workspace} />}
-          {view === 'board' && <BoardView tasks={tasks} setTasks={setTasks} workspace={workspace} toggleTask={toggleTask} deleteTask={deleteTask} />}
+          {view === 'advanced_tasks' && (
+            <AdvancedTasksView 
+              tasks={tasks} 
+              fetchTasks={fetchTasks} 
+              workspace={workspace} 
+              showToast={showToast} 
+              toggleTask={toggleTask} 
+              deleteTask={deleteTask}
+              onInitiateShield={initiateDeepShield}
+            />
+          )}
+          {view === 'journal' && <JournalView workspace={workspace} tasks={tasks} toggleTask={toggleTask} goals={goals} fetchGoals={fetchGoals} />}
+          {view === 'board' && <BoardView tasks={tasks.filter(t => !t.archived && (workspace === 'Personal' || t.workspaceId === workspace))} toggleTask={toggleTask} showToast={setToasts as any} />}
+          {view === 'performance' && <PerformanceView heatmapData={heatmapData} activityData={activityData} focusSessions={focusSessions} tasks={tasks} />}
+          {view === 'strategy' && <StrategyView goals={goals} tasks={tasks} fetchGoals={fetchGoals} workspace={workspace} aiConfig={aiConfig} showToast={setToasts as any} />}
+          {view === 'network' && <NeuralSyncView showToast={showToast} />}
+          {view === 'settings' && <SettingsView profile={profile} showToast={showToast} setTheme={setTheme} customAccent={customAccent} setCustomAccent={setCustomAccent} />}
         </AnimatePresence>
       </main>
 
@@ -656,6 +842,24 @@ export default function App() {
                   </div>
                 </div>
                 <div>
+                  <p className="text-[10px] uppercase tracking-widest text-white/20 font-bold mb-4">App Theme</p>
+                  <div className="flex gap-4 mb-8">
+                    {[
+                      { id: 'midnight', color: '#050505', accent: '#2563eb', name: 'Midnight' },
+                      { id: 'cyberpunk', color: '#0f0f1b', accent: '#f42a72', name: 'Cyberpunk' },
+                      { id: 'nordic', color: '#2e3440', accent: '#a3be8c', name: 'Nordic' },
+                      { id: 'snow', color: '#f8fafc', accent: '#0ea5e9', name: 'Snow' }
+                    ].map(t => (
+                      <button
+                         key={t.id}
+                         onClick={() => setTheme(t.id as Theme)}
+                         className={cn("w-12 h-12 rounded-full border shadow-sm transition-all focus:outline-none", theme === t.id ? "scale-110 border-white shadow-[0_0_15px_rgba(255,255,255,0.2)]" : "border-white/10 hover:scale-105")}
+                         style={{ background: `linear-gradient(135deg, ${t.color} 50%, ${t.accent} 50%)` }}
+                         title={t.name}
+                      />
+                    ))}
+                  </div>
+
                   <p className="text-[10px] uppercase tracking-widest text-white/20 font-bold mb-4">Accent Color</p>
                   <div className="flex items-center gap-4 bg-white/5 border border-white/5 rounded-2xl p-4">
                     <div className="w-6 h-6 rounded-full border-2 border-accent" style={{ background: customAccent || 'var(--accent)' }} />
@@ -673,6 +877,15 @@ export default function App() {
                     <span className="text-sm font-bold">Auto-switch theme by time of day</span>
                     <span className="text-[10px] font-black uppercase">{localStorage.getItem('onyx_auto_dark') === 'true' ? 'ON' : 'OFF'}</span>
                   </button>
+                </div>
+
+                <div className="pt-4 border-t border-white/5 space-y-3">
+                   <p className="text-[10px] uppercase tracking-widest text-white/20 font-bold mb-2">AI Roadmap Configuration</p>
+                   <div className="space-y-2">
+                      <input type="text" value={aiConfig.baseUrl} onChange={e => setAiConfig(prev=>({...prev, baseUrl: e.target.value}))} placeholder="Base URL (e.g. https://api.groq.com/openai/v1)" className="w-full bg-white/5 border border-white/5 rounded-xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-white/20" />
+                      <input type="password" value={aiConfig.apiKey} onChange={e => setAiConfig(prev=>({...prev, apiKey: e.target.value}))} placeholder="API Key (Lifetime Free API from Groq/Grok)" className="w-full bg-white/5 border border-white/5 rounded-xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-white/20" />
+                      <input type="text" value={aiConfig.modelId} onChange={e => setAiConfig(prev=>({...prev, modelId: e.target.value}))} placeholder="Model ID (e.g. llama-3.1-8b-instant)" className="w-full bg-white/5 border border-white/5 rounded-xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-white/20" />
+                   </div>
                 </div>
 
                 <div className="pt-4 border-t border-white/5 space-y-3">
@@ -698,7 +911,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3">
+      <div className="fixed bottom-24 right-6 z-50 flex flex-col gap-3">
         <AnimatePresence>
           {toasts.map(toast => (
             <motion.div key={toast.id} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, scale: 0.9 }} className={cn("px-6 py-4 rounded-2xl border shadow-2xl backdrop-blur-xl min-w-[300px]", toast.type === 'error' ? "bg-red-500/10 border-red-500/20" : toast.type === 'success' ? "bg-emerald-500/10 border-emerald-500/20" : "bg-panel-dark border-white/10")}>
@@ -708,6 +921,25 @@ export default function App() {
           ))}
         </AnimatePresence>
       </div>
+      {/* AI Assistant */}
+      <NeoChat tasks={tasks} profile={profile} focusSessions={focusSessions} onSpeakingChange={setIsNeoSpeaking} />
+
+      {/* Universal HUD Overlay */}
+      <AnimatePresence>
+        {showUniversalHUD && !isHUDDetached && (
+          <UniversalHUD 
+            timeLeft={timeLeft}
+            isActive={isActive}
+            mode={mode}
+            toggleTimer={() => setIsActive(!isActive)}
+            skipNext={handleSkipNext}
+            totalDuration={mode === 'work' ? timerDurations.work * 60 : mode === 'shortBreak' ? timerDurations.shortBreak * 60 : timerDurations.longBreak * 60}
+            isNeoSpeaking={isNeoSpeaking}
+            activeTask={activeTask}
+            onDetach={handleDetachHUD}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

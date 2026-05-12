@@ -9,6 +9,7 @@ export default defineConfig(({mode}) => {
     plugins: [react(), tailwindcss()],
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
+      'process.env.NODE_ENV': JSON.stringify(mode),
     },
     resolve: {
       alias: {
@@ -16,9 +17,16 @@ export default defineConfig(({mode}) => {
       },
     },
     server: {
-      // HMR is disabled in AI Studio via DISABLE_HMR env var.
-      // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
+    },
+    optimizeDeps: {
+      include: [
+        'react', 'react-dom', 'motion/react', 'lucide-react', 'axios', 
+        'socket.io-client', 'canvas-confetti', 'recharts', 'react-quill',
+        '@uiw/react-codemirror', '@uiw/codemirror-theme-vscode',
+        '@codemirror/lang-javascript', '@codemirror/lang-python',
+        'mermaid', 'tldraw', 'katex'
+      ]
     },
   };
 });

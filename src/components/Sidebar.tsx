@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, Zap, ListTodo, Calendar, GraduationCap, Moon, Sun, Settings, Crown, Kanban, BookOpen } from 'lucide-react';
+import { Home, Zap, ListTodo, Calendar, GraduationCap, Moon, Sun, Settings, Crown, Kanban, BookOpen, Wind, BarChart3, Target, Network } from 'lucide-react';
 import { motion } from 'motion/react';
 import { cn } from '../utils';
 import { AppView, Theme, Profile } from '../types';
@@ -33,13 +33,17 @@ export function Sidebar({ view, setView, theme, setTheme, setShowSettings, setSh
 
       <div className="flex md:flex-col gap-2 flex-1 justify-center md:justify-start">
         {[
-          { id: 'dashboard', icon: Home, label: 'Dashboard' },
-          { id: 'timer', icon: Zap, label: 'Timer' },
-          { id: 'tasks', icon: ListTodo, label: 'Tasks' },
+          { id: 'dashboard', icon: Home, label: 'Command Center' },
+          { id: 'strategy', icon: Target, label: 'Strategic Intelligence' },
+          { id: 'advanced_tasks', icon: Zap, label: 'Architect' },
+          { id: 'timer', icon: Wind, label: 'Recovery Suite' },
+          { id: 'tasks', icon: ListTodo, label: 'Task Registry' },
           { id: 'board', icon: Kanban, label: 'Board' },
           { id: 'calendar', icon: Calendar, label: 'Calendar' },
           { id: 'goals', icon: GraduationCap, label: 'Scholar' },
-          { id: 'journal', icon: BookOpen, label: 'Journal' },
+          { id: 'journal', icon: BookOpen, label: 'Architect Journal' },
+          { id: 'performance', icon: BarChart3, label: 'Performance Engine' },
+          { id: 'network', icon: Network, label: 'Neural Network' },
         ].map(item => (
           <button
             key={item.id}
@@ -54,25 +58,16 @@ export function Sidebar({ view, setView, theme, setTheme, setShowSettings, setSh
           </button>
         ))}
       </div>
-      <div className="flex md:flex-col gap-2 items-center">
-        <div className="flex md:flex-col gap-3 p-3 bg-white/5 border border-white/5 rounded-[20px] mb-2 items-center">
-          {[
-            { id: 'midnight', color: '#050505', accent: '#2563eb' },
-            { id: 'cyberpunk', color: '#0f0f1b', accent: '#f42a72' },
-            { id: 'nordic', color: '#2e3440', accent: '#a3be8c' },
-            { id: 'snow', color: '#f8fafc', accent: '#0ea5e9' }
-          ].map(t => (
-            <button
-               key={t.id}
-               onClick={() => setTheme(t.id as Theme)}
-               className={cn("w-6 h-6 rounded-full border shadow-sm transition-all relative", theme === t.id ? "scale-125 border-white z-10" : "border-white/10 hover:scale-110")}
-               style={{ background: `linear-gradient(135deg, ${t.color} 50%, ${t.accent} 50%)` }}
-               title={t.id}
-            />
-          ))}
-        </div>
-        <button onClick={() => setShowSettings(true)} className="w-12 h-12 rounded-xl flex items-center justify-center text-white/40 hover:text-white">
+      <div className="mt-auto flex flex-col gap-2">
+        <button
+          onClick={() => setView('settings')}
+          className={cn(
+            "w-12 h-12 rounded-xl flex items-center justify-center transition-all relative group",
+            view === 'settings' ? "bg-white/15 text-white" : "text-white/40 hover:text-white hover:bg-white/5"
+          )}
+        >
           <Settings className="w-5 h-5" />
+          {view === 'settings' && <motion.div layoutId="nav-active" className="absolute inset-0 border border-white/10 rounded-xl bg-gradient-to-br from-white/5 to-transparent" />}
         </button>
       </div>
     </nav>

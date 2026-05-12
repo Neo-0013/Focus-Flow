@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { GraduationCap, ChevronLeft, ChevronRight, Plus, CheckCircle2, Circle, Trash2, LayoutGrid, Network, X } from 'lucide-react';
+import { GraduationCap, ChevronLeft, ChevronRight, Plus, CheckCircle2, Circle, Trash2, LayoutGrid, Network, X, Trophy } from 'lucide-react';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer } from 'recharts';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import confetti from 'canvas-confetti';
@@ -20,14 +20,21 @@ interface GoalsProps {
   tasks: Task[];
   fetchGoals: () => Promise<void>;
   workspace: Workspace;
+  aiConfig: { baseUrl: string, apiKey: string, modelId: string };
+  showToast: (title: string, body: string, type?: string) => void;
 }
 
-export function GoalsView({ goals, tasks, fetchGoals, workspace }: GoalsProps) {
+export function GoalsView({ goals, tasks, fetchGoals, workspace, aiConfig, showToast }: GoalsProps) {
   const [goalView, setGoalView] = useState<GoalType>('yearly');
   const [goalYear, setGoalYear] = useState(new Date().getFullYear());
   const [displayMode, setDisplayMode] = useState<'kanban' | 'hierarchy'>('kanban');
 
   const [showGoalModal, setShowGoalModal] = useState(false);
+  const [showAIRoadmapModal, setShowAIRoadmapModal] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [draftRoadmap, setDraftRoadmap] = useState<any | null>(null);
+
   const [newGoalTitle, setNewGoalTitle] = useState('');
   const [newGoalTarget, setNewGoalTarget] = useState('1');
   const [newGoalCategory, setNewGoalCategory] = useState<GoalCategory>('Personal');
@@ -96,6 +103,121 @@ export function GoalsView({ goals, tasks, fetchGoals, workspace }: GoalsProps) {
     }
   };
 
+  const handleGenerateRoadmap = async () => {
+    if (!aiPrompt.trim()) return;
+    if (!aiConfig.apiKey) {
+      showToast('Missing Config', 'Please provide an AI API Key in Settings first', 'error');
+      return;
+    }
+    
+    setIsGenerating(true);
+    try {
+      const response = await fetch(`${aiConfig.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${aiConfig.apiKey}`
+        },
+        body: JSON.stringify({
+          model: aiConfig.modelId || 'llama-3.1-8b-instant',
+          messages: [
+            {
+               role: 'system',
+               content: `You are an AI Goal Architect. Output purely JSON exactly matching: {"yearlyGoals": [{"title": "Milestone 1"}], "monthlyGoals": [{"yearlyGoalIndex": 0, "title": "Sub goal", "category": "Career"}], "immediateTasks": [{"monthlyGoalIndex": 0, "title": "First thing to do", "priority": "high"}]}. Categories must be exactly one of: Health, Career, Finance, Education, Personal. Return raw JSON.`
+            },
+            {
+               role: 'user',
+               content: aiPrompt
+            }
+          ],
+          temperature: 0.7,
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`API returned ${response.status}: ${await response.text()}`);
+      }
+
+      const data = await response.json();
+      let content = data.choices?.[0]?.message?.content?.trim() || "";
+      if (content.startsWith('```')) {
+         content = content.replace(/```(?:json)?\n?/, '').replace(/```\n?$/, '');
+      }
+
+      const roadmap = JSON.parse(content);
+      if (!roadmap.yearlyGoals || !roadmap.monthlyGoals) throw new Error("Invalid format returned by AI.");
+      
+      const yearlyGoals = roadmap.yearlyGoals.map((g: any) => ({ ...g, tempId: crypto.randomUUID() }));
+      const monthlyGoals = roadmap.monthlyGoals.map((g: any) => ({ 
+        ...g, 
+        tempId: crypto.randomUUID(),
+        parentTempId: yearlyGoals[g.yearlyGoalIndex]?.tempId || yearlyGoals[0]?.tempId
+      }));
+      const immediateTasks = (roadmap.immediateTasks || []).map((t: any) => ({ 
+        ...t, 
+        tempId: crypto.randomUUID(),
+        parentTempId: monthlyGoals[t.monthlyGoalIndex]?.tempId || monthlyGoals[0]?.tempId
+      }));
+      
+      setDraftRoadmap({ yearlyGoals, monthlyGoals, immediateTasks });
+      confetti({ particleCount: 100, spread: 60, origin: { y: 0.5 } });
+
+    } catch (err: any) {
+      console.error(err);
+      showToast('AI Failure', err.message || 'Failed to generate roadmap', 'error');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleCommitRoadmap = async () => {
+    if (!draftRoadmap) return;
+    setIsGenerating(true);
+    try {
+      const realYearlyIds: Record<string, string> = {};
+      for (const yg of draftRoadmap.yearlyGoals) {
+        const id = crypto.randomUUID();
+        realYearlyIds[yg.tempId] = id;
+        await axios.post(`${API_BASE}/goals`, {
+          id, title: yg.title, type: 'yearly', category: 'Career',
+          yearId: goalYear.toString(), target: 1, workspaceId: workspace
+        });
+      }
+
+      const realMonthlyIds: Record<string, string> = {};
+      for (const mg of draftRoadmap.monthlyGoals) {
+        const parentId = realYearlyIds[mg.parentTempId] || Object.values(realYearlyIds)[0];
+        const id = crypto.randomUUID();
+        realMonthlyIds[mg.tempId] = id;
+        await axios.post(`${API_BASE}/goals`, {
+          id, title: mg.title, type: 'monthly', category: mg.category || 'Career',
+          yearId: goalYear.toString(), parentId, target: 1, workspaceId: workspace
+        });
+      }
+
+      for (const t of draftRoadmap.immediateTasks) {
+        const goalId = realMonthlyIds[t.parentTempId] || Object.values(realMonthlyIds)[0];
+        if (goalId) {
+           await axios.post(`${API_BASE}/tasks`, {
+             id: crypto.randomUUID(), text: t.title, priority: t.priority || 'medium',
+             goalId, workspaceId: workspace
+           });
+        }
+      }
+      
+      fetchGoals();
+      setAiPrompt('');
+      setDraftRoadmap(null);
+      setShowAIRoadmapModal(false);
+      showToast('Roadmap Committed', 'Your AI Roadmap is now live on your dashboard!', 'success');
+      confetti({ particleCount: 200, spread: 90, origin: { y: 0.5 } });
+    } catch (err: any) {
+      showToast('Commit Error', err.message || 'Failed to save roadmap data', 'error');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   const calculateProgress = (g: Goal) => {
     const linkedTasks = tasks.filter(t => t.goalId === g.id && t.completed).length;
     const manualProgress = g.autoProgress || 0;
@@ -140,6 +262,7 @@ export function GoalsView({ goals, tasks, fetchGoals, workspace }: GoalsProps) {
             <button onClick={() => setDisplayMode('kanban')} className={cn("p-2 rounded-lg transition-all", displayMode === 'kanban' ? "bg-white/10 text-white" : "text-white/40 hover:text-white")}><LayoutGrid className="w-4 h-4" /></button>
             <button onClick={() => setDisplayMode('hierarchy')} className={cn("p-2 rounded-lg transition-all", displayMode === 'hierarchy' ? "bg-white/10 text-white" : "text-white/40 hover:text-white")}><Network className="w-4 h-4" /></button>
           </div>
+          <button onClick={() => setShowAIRoadmapModal(true)} className="bg-purple-600/20 text-purple-400 hover:bg-purple-600/40 border border-purple-500/20 shadow-lg px-4 py-2.5 rounded-2xl font-bold text-sm flex items-center gap-2 transition-all"><Network className="w-4 h-4" /> AI Roadmap</button>
           <button onClick={() => setShowGoalModal(true)} className="bg-accent hover:bg-accent shadow-lg px-6 py-2.5 rounded-2xl font-bold text-sm flex items-center gap-2 transition-all"><Plus className="w-4 h-4" /> Add Goal</button>
         </div>
       </header>
@@ -199,7 +322,7 @@ export function GoalsView({ goals, tasks, fetchGoals, workspace }: GoalsProps) {
                                   >
                                     <div className="flex items-start justify-between gap-3">
                                       <h5 className={cn("text-xs font-bold leading-snug", g.done && "line-through")}>{g.title}</h5>
-                                      <button onClick={async () => { await axios.delete(`${API_BASE}/goals/${g.id}`); fetchGoals(); }} className="text-white/20 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 className="w-3.5 h-3.5"/></button>
+                                      <button onClick={async () => { await axios.delete(`${API_BASE}/goals/${g.id}`); fetchGoals(); }} className="text-red-400/60 hover:text-red-400 bg-red-400/10 hover:bg-red-400/20 p-1.5 rounded-md transition-all"><Trash2 className="w-3.5 h-3.5"/></button>
                                     </div>
                                     <div className="flex items-center justify-between gap-2 mt-auto">
                                       <span className={cn("px-2 py-0.5 rounded text-[8px] uppercase font-bold", CATEGORY_COLORS[g.category || 'Personal'], "bg-opacity-20 text-white")}>
@@ -296,6 +419,133 @@ export function GoalsView({ goals, tasks, fetchGoals, workspace }: GoalsProps) {
                 </div>
                 <button onClick={handleAddGoal} className="w-full py-4 bg-accent hover:bg-accent text-white rounded-2xl font-bold text-sm shadow-xl transition-all mt-4">Create Goal</button>
               </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* AI Roadmap Modal */}
+      <AnimatePresence>
+        {showAIRoadmapModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+            <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="bg-panel border border-purple-500/30 rounded-[40px] p-8 w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-[0_0_80px_rgba(168,85,247,0.15)] relative">
+              <button disabled={isGenerating} onClick={() => { setShowAIRoadmapModal(false); setDraftRoadmap(null); }} className="absolute top-6 right-6 p-2 text-white/40 hover:text-white"><X className="w-5 h-5"/></button>
+              
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-10 h-10 rounded-xl bg-purple-500/10 flex items-center justify-center border border-purple-500/20">
+                   <Network className="w-5 h-5 text-purple-400" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold capitalize leading-tight">{draftRoadmap ? 'Review & Organize Roadmap' : 'AI Architect'}</h2>
+                  <p className="text-xs text-white/50">{draftRoadmap ? 'Fine-tune the plan before committing it to your workspace.' : 'Describe your ambition. We\'ll plan the rest.'}</p>
+                </div>
+              </div>
+              
+              {!draftRoadmap ? (
+                <div className="space-y-4">
+                  <div>
+                    <textarea 
+                      autoFocus 
+                      value={aiPrompt} 
+                      onChange={e=>setAiPrompt(e.target.value)} 
+                      placeholder="e.g. Write a novel, transition to a Product Manager role, or run a marathon..." 
+                      className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 focus:outline-none focus:border-purple-500/40 resize-none min-h-[120px]" 
+                    />
+                  </div>
+                  <button disabled={isGenerating} onClick={handleGenerateRoadmap} className="w-full py-4 bg-purple-600 hover:bg-purple-500 text-white rounded-2xl font-bold text-sm shadow-[0_0_20px_rgba(168,85,247,0.4)] transition-all flex items-center justify-center gap-2">
+                    {isGenerating ? (
+                      <><motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}><Network className="w-4 h-4" /></motion.div> Designing Roadmap...</>
+                    ) : (
+                      <>Generate Master Plan <Plus className="w-4 h-4 ml-1"/></>
+                    )}
+                  </button>
+                  {!aiConfig.apiKey && (
+                    <p className="text-red-400 text-center text-xs mt-2">API Key missing! Please configure AI settings in the main sidebar first.</p>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  {draftRoadmap.yearlyGoals.map((yg: any, yIdx: number) => (
+                    <div key={yg.tempId} className="bg-white/5 border border-white/10 rounded-2xl p-5 shadow-lg relative group">
+                      <button onClick={() => {
+                        const cascadeMonthlyIds = draftRoadmap.monthlyGoals.filter((mg: any) => mg.parentTempId === yg.tempId).map((mg: any) => mg.tempId);
+                        setDraftRoadmap({
+                          ...draftRoadmap,
+                          yearlyGoals: draftRoadmap.yearlyGoals.filter((y: any) => y.tempId !== yg.tempId),
+                          monthlyGoals: draftRoadmap.monthlyGoals.filter((m: any) => m.parentTempId !== yg.tempId),
+                          immediateTasks: draftRoadmap.immediateTasks.filter((t: any) => !cascadeMonthlyIds.includes(t.parentTempId))
+                        });
+                      }} className="absolute top-4 right-4 text-red-400/70 hover:text-red-400 bg-red-400/10 hover:bg-red-400/20 p-1.5 rounded-lg transition-all"><Trash2 className="w-4 h-4"/></button>
+                      
+                      <div className="flex items-center gap-3 pr-8">
+                         <span className="text-[10px] font-black uppercase tracking-widest text-accent bg-accent/10 px-2 py-0.5 rounded flex items-center gap-1"><Trophy className="w-3 h-3"/> YEARLY</span>
+                         <input value={yg.title} onChange={e => {
+                           const yGoals = [...draftRoadmap.yearlyGoals];
+                           const idx = yGoals.findIndex(y => y.tempId === yg.tempId);
+                           yGoals[idx].title = e.target.value;
+                           setDraftRoadmap({...draftRoadmap, yearlyGoals: yGoals});
+                         }} className="flex-1 bg-transparent text-sm font-bold border-b border-transparent focus:border-white/20 focus:outline-none pb-0.5" />
+                      </div>
+                      <div className="mt-4 pl-4 border-l-2 border-white/5 space-y-4">
+                         {draftRoadmap.monthlyGoals.filter((mg: any) => mg.parentTempId === yg.tempId).map((mg: any) => {
+                           return (
+                             <div key={mg.tempId} className="space-y-2 relative group/monthly">
+                               <button onClick={() => {
+                                 setDraftRoadmap({
+                                   ...draftRoadmap,
+                                   monthlyGoals: draftRoadmap.monthlyGoals.filter((m: any) => m.tempId !== mg.tempId),
+                                   immediateTasks: draftRoadmap.immediateTasks.filter((t: any) => t.parentTempId !== mg.tempId)
+                                 });
+                               }} className="absolute -top-1 -right-1 text-red-400/70 hover:text-red-400 bg-red-400/10 hover:bg-red-400/20 p-1.5 rounded-lg transition-all"><Trash2 className="w-3.5 h-3.5"/></button>
+                               <div className="flex items-start gap-3 pr-6">
+                                 <div className="w-4 h-4 rounded-full border border-white/20 bg-panel mt-0.5 flex items-center justify-center -ml-[25px]"><div className="w-1.5 h-1.5 rounded-full bg-purple-400" /></div>
+                                 <span className="text-[10px] font-bold text-white/50 bg-white/5 px-2 py-0.5 rounded capitalize">{mg.category}</span>
+                                 <input value={mg.title} onChange={e => {
+                                   const mGoals = [...draftRoadmap.monthlyGoals];
+                                   const mIdx = mGoals.findIndex(m => m.tempId === mg.tempId);
+                                   mGoals[mIdx].title = e.target.value;
+                                   setDraftRoadmap({...draftRoadmap, monthlyGoals: mGoals});
+                                 }} className="flex-1 bg-transparent text-xs font-bold border-b border-transparent focus:border-white/20 focus:outline-none pb-0.5" />
+                               </div>
+                               <div className="pl-6 space-y-1">
+                                 {draftRoadmap.immediateTasks.filter((t: any) => t.parentTempId === mg.tempId).map((tk: any) => {
+                                   return (
+                                     <div key={tk.tempId} className="group/task flex flex-col gap-1 rounded bg-black/20 p-2 border border-white/5 relative">
+                                       <div className="flex items-center gap-2 pr-6">
+                                         <span className="w-1 h-3 bg-red-400 rounded-full" />
+                                         <input value={tk.title} onChange={e => {
+                                           const tsks = [...draftRoadmap.immediateTasks];
+                                           const tIdx = tsks.findIndex(t => t.tempId === tk.tempId);
+                                           tsks[tIdx].title = e.target.value;
+                                           setDraftRoadmap({...draftRoadmap, immediateTasks: tsks});
+                                         }} className="flex-1 bg-transparent text-[10px] text-white/80 focus:outline-none" />
+                                       </div>
+                                       <button onClick={() => {
+                                         setDraftRoadmap({
+                                           ...draftRoadmap,
+                                           immediateTasks: draftRoadmap.immediateTasks.filter((t: any) => t.tempId !== tk.tempId)
+                                         });
+                                       }} className="absolute top-1/2 -translate-y-1/2 right-2 text-red-400/70 hover:text-red-400 bg-red-400/10 hover:bg-red-400/20 p-1 rounded-md transition-all"><Trash2 className="w-3.5 h-3.5"/></button>
+                                     </div>
+                                   );
+                                 })}
+                               </div>
+                             </div>
+                           );
+                         })}
+                      </div>
+                    </div>
+                  ))}
+                  
+                  <div className="flex gap-3">
+                    <button disabled={isGenerating} onClick={() => setDraftRoadmap(null)} className="py-4 px-6 bg-white/5 hover:bg-white/10 text-white rounded-2xl font-bold text-sm transition-all focus:outline-none">Discard</button>
+                    <button disabled={isGenerating} onClick={handleCommitRoadmap} className="flex-1 py-4 bg-purple-600 hover:bg-purple-500 text-white rounded-2xl font-bold text-sm shadow-[0_0_20px_rgba(168,85,247,0.4)] transition-all flex items-center justify-center gap-2">
+                      {isGenerating ? <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}><Network className="w-4 h-4" /></motion.div> : <CheckCircle2 className="w-4 h-4" />}
+                      {isGenerating ? 'Committing...' : 'Commit to Dashboard'}
+                    </button>
+                  </div>
+                </div>
+              )}
             </motion.div>
           </div>
         )}
