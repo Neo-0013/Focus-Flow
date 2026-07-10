@@ -6,53 +6,41 @@ import axios from 'axios';
 import { io, Socket } from 'socket.io-client';
 // @ts-ignore
 import confetti from 'canvas-confetti';
-import { X, Volume2, Check, Zap, Trophy, Flame, Download, Upload, Settings } from 'lucide-react';
-import { cn, generateUUID } from './utils';
+import { X, Volume2, Check, Zap, Trophy, Flame, Download, Upload, Settings, Star, Moon, Brain, BookOpen, Target, Shield, Swords, Crown } from 'lucide-react';
+import { cn, generateUUID } from './utils/index';
 import { Task, Goal, AppView, TimerMode, Theme, SoundOption, Priority, Habit, Profile, Workspace, Achievement } from './types';
 
-import { Sidebar } from './components/Sidebar';
-import { NeoChat } from './components/NeoChat';
-import { DashboardView } from './views/DashboardView';
-import { TimerView } from './views/TimerView';
-import { TasksView } from './views/TasksView';
-import { CalendarView } from './views/CalendarView';
-import { GoalsView } from './views/GoalsView';
-import { JournalView } from './views/JournalView';
-import { BoardView } from './views/BoardView';
-import { PerformanceView } from './views/PerformanceView';
-import { StrategyView } from './views/StrategyView';
-import { UniversalHUD } from './components/UniversalHUD';
-import { NeuralSyncView } from './views/NeuralSyncView';
-import { AdvancedTasksView } from './views/AdvancedTasksView';
-import { SettingsView } from './views/SettingsView';
+import { Sidebar } from './components/layout/Sidebar';
+import { NeoChat } from './components/features/NeoChat';
+import { DashboardView } from './pages/DashboardView';
+import { TimerView } from './pages/TimerView';
+import { TasksView } from './pages/TasksView';
+import { CalendarView } from './pages/CalendarView';
+import { GoalsView } from './pages/GoalsView';
+import { JournalView } from './pages/JournalView';
+import { BoardView } from './pages/BoardView';
+import { PerformanceView } from './pages/PerformanceView';
+import { StrategyView } from './pages/StrategyView';
+import { UniversalHUD } from './components/layout/UniversalHUD';
+import { NeuralSyncView } from './pages/NeuralSyncView';
+import { AdvancedTasksView } from './pages/AdvancedTasksView';
+import { SettingsView } from './pages/SettingsView';
+import { SessionDebrief } from './components/features/SessionDebrief';
+import { DocForgeView } from './pages/DocForgeView';
+import { CommandPalette } from './components/features/CommandPalette';
+import { StudyHubView } from './pages/StudyHubView';
 
-const BADGES = [
-  { id: 'early_bird', title: 'Early Bird', description: 'Complete a task before 8 AM', icon: Zap, color: 'text-amber-400' },
-  { id: 'weekend_warrior', title: 'Weekend Warrior', description: 'Complete a task on Saturday or Sunday', icon: Trophy, color: 'text-purple-400' },
-  { id: 'dedicated_focus', title: 'Dedicated Focus', description: 'Successfully finish a focus session', icon: Flame, color: 'text-orange-500' }
-];
+import { BADGES, API_BASE, DEFAULT_SOUNDS, DEFAULT_DURATIONS, MODES_META } from './constants';
 
 // API Configuration
-const API_BASE = 'http://localhost:3002';
 const socket: Socket = io(API_BASE);
-
-const DEFAULT_SOUNDS: SoundOption[] = [
-  { id: 'bell', name: 'Alarm Bell', url: '/audio/bell.mp3' },
-  { id: 'rain', name: 'Rain Drop', url: '/audio/rain.mp3' },
-  { id: 'cafe', name: 'Cafe Buzz', url: '/audio/cafe.mp3' }
-];
-
-const DEFAULT_DURATIONS = { work: 25, shortBreak: 5, longBreak: 15 };
-
-const MODES_META: Record<TimerMode, { label: string }> = {
-  work: { label: 'Focus' },
-  shortBreak: { label: 'Short Break' },
-  longBreak: { label: 'Long Break' },
-};
 
 export default function App() {
   // State
-  const [view, setView] = useState<AppView>('dashboard');
+  const [view, setViewRaw] = useState<AppView>('dashboard');
+  const [voidModeActive, setVoidModeActive] = useState(false);
+  const [showDebrief, setShowDebrief] = useState(false);
+  const [debriefData, setDebriefData] = useState<{duration: number; sessionCount: number; xpEarned: number; task?: Task; streak: number} | null>(null);
   const [mode, setMode] = useState<TimerMode>('work');
   const [timerDurations, setTimerDurations] = useState(() => {
     const saved = localStorage.getItem('onyx_timer_durations');
@@ -75,14 +63,14 @@ export default function App() {
      return (saved as Theme) || 'midnight';
   });
   const [customAccent, setCustomAccent] = useState<string>(() => localStorage.getItem('onyx_accent') || '');
-  const [toasts, setToasts] = useState<{id: string, title: string, body: string, type?: string}[]>([]);
+  const [toasts, setToasts] = useState<{id: string, title: string, body: string, type?: string, onUndo?: () => void}[]>([]);
   const [selectedSound, setSelectedSound] = useState<SoundOption>(() => {
     const saved = localStorage.getItem('onyx_selected_sound');
     return saved ? JSON.parse(saved) : DEFAULT_SOUNDS[0];
   });
   const [aiConfig, setAiConfig] = useState(() => {
     const saved = localStorage.getItem('onyx_ai_config');
-    return saved ? JSON.parse(saved) : { baseUrl: 'https://api.groq.com/openai/v1', apiKey: '', modelId: 'llama-3.1-8b-instant' };
+    return saved ? JSON.parse(saved) : { baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', apiKey: '', modelId: 'gemini-2.5-flash' };
   });
   const [currentTime, setCurrentTime] = useState(new Date());
   const [showSettings, setShowSettings] = useState(false);
@@ -91,6 +79,7 @@ export default function App() {
   const [pipWindow, setPipWindow] = useState<any>(null);
   const pipRootRef = useRef<Root | null>(null);
   const [isNeoSpeaking, setIsNeoSpeaking] = useState(false);
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
 
 
   // Task Input State (Used across Dashboard, Timer, Tasks)
@@ -111,6 +100,7 @@ export default function App() {
   // Refs
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const wakeLockRef = useRef<any>(null);
   const [timerPresets, setTimerPresets] = useState<any[]>([]);
   const [dailyGoalMinutes, setDailyGoalMinutes] = useState(120);
   const [focusedTodayMinutes, setFocusedTodayMinutes] = useState(0);
@@ -148,6 +138,61 @@ export default function App() {
       Notification.requestPermission();
     }
   };
+
+  // ── Screen Wake Lock: prevent sleep while timer is running ──
+  useEffect(() => {
+    const acquireWakeLock = async () => {
+      if ('wakeLock' in navigator) {
+        try {
+          wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
+          wakeLockRef.current.addEventListener('release', () => {
+            console.log('[WakeLock] Screen wake lock released');
+          });
+          console.log('[WakeLock] Screen wake lock acquired');
+        } catch (err: any) {
+          console.warn('[WakeLock] Could not acquire wake lock:', err.message);
+        }
+      }
+    };
+
+    const releaseWakeLock = async () => {
+      if (wakeLockRef.current) {
+        await wakeLockRef.current.release();
+        wakeLockRef.current = null;
+      }
+    };
+
+    if (isActive) {
+      acquireWakeLock();
+    } else {
+      releaseWakeLock();
+    }
+
+    // Re-acquire wake lock if the page becomes visible again while timer is active
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState === 'visible' && isActive && !wakeLockRef.current) {
+        await acquireWakeLock();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      releaseWakeLock();
+    };
+  }, [isActive]);
+
+  // ── Ctrl+K Command Palette ──
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        setShowCommandPalette(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
 
   // Initialization & Socket
   useEffect(() => {
@@ -294,8 +339,10 @@ export default function App() {
       const res = await axios.post(`${API_BASE}/achievements`, { badgeId });
       if (res.data.success && res.data.newlyUnlocked) {
          fetchAchievements();
-         showToast('🏆 Achievement Unlocked!', `You earned the ${badgeId.replace('_', ' ').toUpperCase()} badge!`, 'success');
+         showToast('🏆 Achievement Unlocked!', `You earned the ${badgeId.replace(/_/g, ' ').toUpperCase()} badge!`, 'success');
          confetti({ particleCount: 200, spread: 100, origin: { y: 0.3 } });
+         // Meta: The Architect (15+ badges)
+         if (achievements.length >= 14) checkAchievement('the_architect');
       }
     } catch {}
   };
@@ -307,15 +354,26 @@ export default function App() {
       if (res.data.leveledUp) {
         showToast('🎉 LEVEL UP!', `You are now Level ${res.data.profile.level}!`, 'success');
         confetti({ particleCount: 150, spread: 80, origin: { y: 0.6 } });
+        if (res.data.profile.level >= 5) checkAchievement('level_5');
+        if (res.data.profile.level >= 10) checkAchievement('level_10');
       }
     } catch {}
   };
 
   // Toast System
-  const showToast = (title: string, body: string, type: string = 'info') => {
+  const showToast = (title: string, body: string, type: string = 'info', onUndo?: () => void) => {
     const id = generateUUID();
-    setToasts(prev => [...prev, { id, title, body, type }]);
-    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 5000);
+    setToasts(prev => [...prev, { id, title, body, type, onUndo }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), onUndo ? 6000 : 5000);
+  };
+
+  // Guarded view navigation — blocked during Void Mode
+  const setView = (newView: AppView) => {
+    if (voidModeActive && newView !== 'timer') {
+      showToast('🚫 Void Mode Active', 'Complete your session or hold Exit to break out.', 'error');
+      return;
+    }
+    setViewRaw(newView);
   };
 
   // Task Actions
@@ -330,6 +388,11 @@ export default function App() {
         if (hour < 8) checkAchievement('early_bird');
         const day = new Date().getDay();
         if (day === 0 || day === 6) checkAchievement('weekend_warrior');
+        // Count-based achievements
+        const completedCount = tasks.filter(t => t.completed).length + 1;
+        if (completedCount >= 10) checkAchievement('task_master');
+        if (completedCount >= 100) checkAchievement('centurion');
+        if (completedCount >= 5) checkAchievement('perfect_day');
       }
       await axios.patch(`${API_BASE}/tasks/${id}`, { completed: !task.completed });
       await fetchTasks();
@@ -388,6 +451,13 @@ export default function App() {
       setDashboardRecurrence(null);
       addXP(10, 'Planned Ahead');
       showToast('Success', 'Task added successfully', 'success');
+      // Achievement checks
+      if (dashboardDueDate) {
+        const withDueDates = tasks.filter(t => t.dueDate).length + 1;
+        if (withDueDates >= 5) checkAchievement('planner');
+      }
+      const totalSubTasks = tasks.reduce((acc, t) => acc + (t.subTasks?.length || 0), 0) + dashboardNewSubTasks.length;
+      if (totalSubTasks >= 25) checkAchievement('sub_task_pro');
     } catch (err) {
       showToast('Error', 'Failed to add task', 'error');
     }
@@ -406,10 +476,40 @@ export default function App() {
       timerRef.current = setInterval(() => setTimeLeft(prev => prev - 1), 1000);
     } else if (timeLeft === 0) {
       setIsActive(false);
+      setVoidModeActive(false);
       playNotificationSound();
       if (mode === 'work') {
         confetti({ particleCount: 200, spread: 100, origin: { y: 0.5 } });
         addXP(50, 'Finished a Focus Session');
+        // Achievements
+        checkAchievement('dedicated_focus');
+        checkAchievement('first_focus');
+        const nowHour = new Date().getHours();
+        if (nowHour >= 22 || nowHour < 4) checkAchievement('night_owl');
+        if (timerDurations.work >= 90) checkAchievement('marathon_man');
+        const totalWorkSessions = focusSessions.filter((s: any) => s.mode === 'work').length + 1;
+        if (totalWorkSessions >= 50) checkAchievement('sessions_50');
+        if (totalWorkSessions >= 100) checkAchievement('sessions_100');
+        const weekMs = 7 * 24 * 60 * 60 * 1000;
+        const weekMins = focusSessions
+          .filter((s: any) => s.mode === 'work' && (Date.now() - new Date(s.completedAt).getTime()) < weekMs)
+          .reduce((a: number, s: any) => a + s.duration / 60, 0) + timerDurations.work;
+        if (weekMins >= 600) checkAchievement('deep_architect');
+        // Week warrior: 5-day consecutive focus days
+        const todayBase = new Date(); todayBase.setHours(0, 0, 0, 0);
+        let consecutive = 1;
+        for (let i = 1; i <= 6; i++) {
+          const d = new Date(todayBase); d.setDate(todayBase.getDate() - i);
+          if (focusSessions.some((s: any) => s.mode === 'work' && new Date(s.completedAt).toDateString() === d.toDateString())) consecutive++;
+          else break;
+        }
+        if (consecutive >= 5) checkAchievement('week_warrior');
+        // Session debrief
+        const todayCount = focusSessions.filter((s: any) => s.mode === 'work' && new Date(s.completedAt).toDateString() === new Date().toDateString()).length + 1;
+        const activeTaskForDebrief = tasks.find(t => t.id === activePomodoroTaskId);
+        setDebriefData({ duration: timerDurations.work, sessionCount: todayCount, xpEarned: 50, task: activeTaskForDebrief, streak: consecutive });
+        setShowDebrief(true);
+        // Log session
         axios.post(`${API_BASE}/focus-sessions`, {
           workspaceId: workspace,
           mode: 'work',
@@ -438,10 +538,11 @@ export default function App() {
 
   const initiateDeepShield = async () => {
     setIsActive(true);
-    setView('timer');
-    showToast('Deep Shield Active', 'Focus Isolation Protocol initiated. All distractions cloaked.', 'success');
+    setViewRaw('timer');
+    setVoidModeActive(true);
+    showToast('⚡ Void Mode Active', 'Navigation locked. Complete your session or hold Exit to break out.', 'success');
     addXP(15, 'Isolation Protocol');
-    // Optionally auto-detach HUD
+    checkAchievement('void_mode_user');
     if ('documentPictureInPicture' in window && !isHUDDetached) {
        handleDetachHUD();
     }
@@ -552,6 +653,7 @@ export default function App() {
     setView,
     toggleTask,
     deleteTask,
+    fetchTasks,
     expandedTasks,
     setExpandedTasks,
     goals,
@@ -561,6 +663,7 @@ export default function App() {
     currentTime,
     showToast,
     addXP,
+    checkAchievement,
     workspace,
     profile,
     timerDurations,
@@ -661,7 +764,7 @@ export default function App() {
   }, [isHUDDetached, timeLeft, isActive, mode, isNeoSpeaking, activeTask, timerDurations]);
 
   return (
-    <div className={cn("h-screen w-screen bg-app text-white font-sans selection:bg-white/20 flex flex-col md:flex-row overflow-hidden relative", `theme-${theme}`)}>
+    <div className={cn("h-screen w-screen bg-app text-white font-sans selection:bg-accent/30 flex flex-col md:flex-row overflow-hidden relative", `theme-${theme}`)}>
       <audio ref={audioRef} src={selectedSound.url} />
 
       <Sidebar 
@@ -674,20 +777,36 @@ export default function App() {
         profile={profile}
       />
 
-      <main className="flex-1 relative overflow-y-auto p-4 md:p-8">
-        <header className="flex items-center justify-between mb-8">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center">
-              <div className="w-3 h-3 bg-black rounded-full" />
+      <main className="flex-1 relative overflow-y-auto">
+        <header className="sticky top-0 z-30 flex items-center justify-between px-6 md:px-8 py-4 border-b border-white/[0.05] backdrop-blur-2xl bg-app/80">
+          {/* Left: Logo + Workspace */}
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 bg-gradient-to-br from-accent to-accent-dark rounded-xl flex items-center justify-center shadow-[0_0_15px_var(--accent)40]">
+              <div className="w-3 h-3 bg-white rounded-full" />
             </div>
-            <span className="text-xl font-bold tracking-tight pr-4 border-r border-white/10">FocusFlow</span>
-            <select value={workspace} onChange={e => setWorkspace(e.target.value as Workspace)} className="ml-2 bg-white/5 hover:bg-white/10 transition-colors cursor-pointer border border-white/10 rounded-xl px-3 py-1.5 text-xs font-bold focus:outline-none appearance-none">
-               <option value="Personal" className="bg-panel text-white">🏠 Personal</option>
-               <option value="Work" className="bg-panel text-white">💼 Work</option>
-               <option value="Project" className="bg-panel text-white">🚀 Project</option>
-            </select>
+            <div className="flex flex-col">
+              <span className="text-sm font-black tracking-tight leading-none">FocusFlow</span>
+              <span className="text-[9px] text-white/20 uppercase tracking-widest font-bold leading-none mt-0.5">Architect OS</span>
+            </div>
+            <div className="w-px h-7 bg-white/[0.06] mx-1" />
+            <div className="workspace-selector relative">
+              <select
+                value={workspace}
+                onChange={e => setWorkspace(e.target.value as Workspace)}
+                className="bg-white/[0.04] hover:bg-white/[0.08] transition-all cursor-pointer border border-white/[0.07] hover:border-white/[0.15] rounded-xl pl-3 pr-8 py-2 text-xs font-bold focus:outline-none appearance-none text-white/70 hover:text-white"
+              >
+                <option value="Personal" className="bg-panel text-white">🏠 Personal</option>
+                <option value="Work" className="bg-panel text-white">💼 Work</option>
+                <option value="Project" className="bg-panel text-white">🚀 Project</option>
+              </select>
+              <div className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none">
+                <svg width="8" height="5" viewBox="0 0 8 5" fill="none"><path d="M1 1L4 4L7 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-white/30" /></svg>
+              </div>
+            </div>
           </div>
-          <div className="hidden lg:flex items-center bg-panel-dark rounded-2xl p-1 border border-white/5">
+
+          {/* Center: Quick Nav pills */}
+          <div className="hidden xl:flex items-center bg-white/[0.03] rounded-2xl p-1 border border-white/[0.06] gap-0.5">
             {[
               { id: 'dashboard', label: 'Dashboard' },
               { id: 'timer', label: 'Timer' },
@@ -700,28 +819,48 @@ export default function App() {
                 key={item.id}
                 onClick={() => setView(item.id as AppView)}
                 className={cn(
-                  "px-6 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2",
-                  view === item.id ? "bg-accent text-white shadow-[0_0_20px_rgba(37,99,235,0.4)]" : "text-white/40 hover:text-white"
+                  "relative px-4 py-1.5 rounded-xl text-xs font-semibold transition-all",
+                  view === item.id
+                    ? "text-white"
+                    : "text-white/30 hover:text-white/70"
                 )}
               >
-                {item.label}
+                {view === item.id && (
+                  <motion.div
+                    layoutId="header-nav-active"
+                    className="absolute inset-0 rounded-xl bg-accent/20 border border-accent/30"
+                    style={{ boxShadow: '0 0 12px var(--accent)20' }}
+                    transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+                  />
+                )}
+                <span className="relative z-10">{item.label}</span>
               </button>
             ))}
           </div>
-          <div className="flex items-center gap-4 justify-end">
-            <button onClick={() => setShowUniversalHUD(!showUniversalHUD)} className={cn("transition-colors flex items-center gap-2", showUniversalHUD ? "text-focus-cyan" : "text-white/40 hover:text-white")} title="Toggle Universal HUD">
-               <span className="material-symbols-outlined text-[20px]">timer</span>
-               <span className="text-xs font-bold uppercase tracking-widest hidden lg:block">HUD</span>
-            </button>
-            <button onClick={() => setView('settings')} className={cn("transition-colors flex items-center gap-2", view === 'settings' ? "text-focus-cyan" : "text-white/40 hover:text-white")} title="Architect Control">
-               <Settings className="w-5 h-5" />
+
+          {/* Right: HUD toggle + Settings */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowUniversalHUD(!showUniversalHUD)}
+              className={cn(
+                "flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold uppercase tracking-wider transition-all",
+                showUniversalHUD
+                  ? "bg-focus-cyan/10 border-focus-cyan/30 text-focus-cyan shadow-[0_0_15px_rgba(0,240,255,0.15)]"
+                  : "bg-white/[0.04] border-white/[0.06] text-white/40 hover:text-white hover:border-white/20"
+              )}
+              title="Toggle Universal HUD"
+            >
+              <span className="material-symbols-outlined text-[15px]">timer</span>
+              <span className="hidden sm:block">HUD</span>
             </button>
           </div>
         </header>
 
+        <div className="p-4 md:p-8">
+
         <AnimatePresence mode="wait">
-          {view === 'dashboard' && <DashboardView {...viewProps} />}
-          {view === 'timer' && <TimerView {...viewProps} mode={mode} setMode={setMode} timeLeft={timeLeft} isActive={isActive} setIsActive={setIsActive} resetTimer={resetTimer} />}
+          {view === 'dashboard' && <DashboardView {...viewProps} aiConfig={aiConfig} />}
+          {view === 'timer' && <TimerView {...viewProps} mode={mode} setMode={setMode} timeLeft={timeLeft} isActive={isActive} setIsActive={setIsActive} resetTimer={resetTimer} voidModeActive={voidModeActive} setVoidModeActive={setVoidModeActive} />}
           {view === 'calendar' && <CalendarView {...viewProps} focusSessions={focusSessions} />}
           {view === 'goals' && <GoalsView {...viewProps} />}
           {view === 'tasks' && <TasksView {...viewProps} />}
@@ -741,8 +880,11 @@ export default function App() {
           {view === 'performance' && <PerformanceView heatmapData={heatmapData} activityData={activityData} focusSessions={focusSessions} tasks={tasks} />}
           {view === 'strategy' && <StrategyView goals={goals} tasks={tasks} fetchGoals={fetchGoals} workspace={workspace} aiConfig={aiConfig} showToast={setToasts as any} />}
           {view === 'network' && <NeuralSyncView showToast={showToast} />}
-          {view === 'settings' && <SettingsView profile={profile} showToast={showToast} setTheme={setTheme} customAccent={customAccent} setCustomAccent={setCustomAccent} />}
+          {view === 'settings' && <SettingsView profile={profile} showToast={showToast} setTheme={setTheme} customAccent={customAccent} setCustomAccent={setCustomAccent} aiConfig={aiConfig} setAiConfig={setAiConfig} />}
+          {view === 'docforge' && <DocForgeView aiConfig={aiConfig} showToast={showToast} />}
+          {view === 'study' && <StudyHubView workspace={workspace} aiConfig={aiConfig} showToast={showToast} addXP={addXP} />}
         </AnimatePresence>
+        </div>
       </main>
 
       <AnimatePresence>
@@ -882,9 +1024,9 @@ export default function App() {
                 <div className="pt-4 border-t border-white/5 space-y-3">
                    <p className="text-[10px] uppercase tracking-widest text-white/20 font-bold mb-2">AI Roadmap Configuration</p>
                    <div className="space-y-2">
-                      <input type="text" value={aiConfig.baseUrl} onChange={e => setAiConfig(prev=>({...prev, baseUrl: e.target.value}))} placeholder="Base URL (e.g. https://api.groq.com/openai/v1)" className="w-full bg-white/5 border border-white/5 rounded-xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-white/20" />
-                      <input type="password" value={aiConfig.apiKey} onChange={e => setAiConfig(prev=>({...prev, apiKey: e.target.value}))} placeholder="API Key (Lifetime Free API from Groq/Grok)" className="w-full bg-white/5 border border-white/5 rounded-xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-white/20" />
-                      <input type="text" value={aiConfig.modelId} onChange={e => setAiConfig(prev=>({...prev, modelId: e.target.value}))} placeholder="Model ID (e.g. llama-3.1-8b-instant)" className="w-full bg-white/5 border border-white/5 rounded-xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-white/20" />
+                      <input type="text" value={aiConfig.baseUrl} onChange={e => setAiConfig(prev=>({...prev, baseUrl: e.target.value}))} placeholder="Base URL (e.g. https://generativelanguage.googleapis.com/v1beta/openai)" className="w-full bg-white/5 border border-white/5 rounded-xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-white/20" />
+                      <input type="password" value={aiConfig.apiKey} onChange={e => setAiConfig(prev=>({...prev, apiKey: e.target.value}))} placeholder="API Key (Google AI Studio Key)" className="w-full bg-white/5 border border-white/5 rounded-xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-white/20" />
+                      <input type="text" value={aiConfig.modelId} onChange={e => setAiConfig(prev=>({...prev, modelId: e.target.value}))} placeholder="Model ID (e.g. gemini-2.5-flash)" className="w-full bg-white/5 border border-white/5 rounded-xl py-3 px-4 text-xs font-bold focus:outline-none focus:border-white/20" />
                    </div>
                 </div>
 
@@ -911,18 +1053,67 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <div className="fixed bottom-24 right-6 z-50 flex flex-col gap-3">
+      <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3 max-w-sm">
         <AnimatePresence>
           {toasts.map(toast => (
-            <motion.div key={toast.id} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, scale: 0.9 }} className={cn("px-6 py-4 rounded-2xl border shadow-2xl backdrop-blur-xl min-w-[300px]", toast.type === 'error' ? "bg-red-500/10 border-red-500/20" : toast.type === 'success' ? "bg-emerald-500/10 border-emerald-500/20" : "bg-panel-dark border-white/10")}>
-              <h5 className="font-bold text-sm">{toast.title}</h5>
-              <p className="text-xs text-white/60">{toast.body}</p>
+            <motion.div
+              key={toast.id}
+              initial={{ opacity: 0, x: 60, scale: 0.92 }}
+              animate={{ opacity: 1, x: 0, scale: 1 }}
+              exit={{ opacity: 0, x: 40, scale: 0.9 }}
+              transition={{ type: 'spring', damping: 22, stiffness: 250 }}
+              className={cn(
+                "relative px-5 py-4 rounded-2xl border shadow-2xl backdrop-blur-2xl overflow-hidden",
+                toast.type === 'error'
+                  ? "bg-red-950/90 border-red-500/25"
+                  : toast.type === 'success'
+                  ? "bg-emerald-950/90 border-emerald-500/25"
+                  : "bg-[#0a0f10]/95 border-white/10"
+              )}
+            >
+              {/* Accent line on left */}
+              <div className={cn(
+                "absolute left-0 top-3 bottom-3 w-0.5 rounded-r-full",
+                toast.type === 'error' ? "bg-red-500" : toast.type === 'success' ? "bg-emerald-500" : "bg-accent"
+              )} />
+              <div className="pl-3 flex items-start justify-between gap-3">
+                <div>
+                  <h5 className="font-bold text-sm text-white">{toast.title}</h5>
+                  <p className="text-xs text-white/50 mt-0.5 leading-relaxed">{toast.body}</p>
+                </div>
+                {toast.onUndo && (
+                  <button
+                    onClick={() => {
+                      toast.onUndo?.();
+                      setToasts(prev => prev.filter(t => t.id !== toast.id));
+                    }}
+                    className="shrink-0 text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded-lg border border-white/20 text-white/70 hover:text-white hover:border-white/50 transition-all mt-0.5"
+                  >Undo</button>
+                )}
+              </div>
             </motion.div>
           ))}
         </AnimatePresence>
       </div>
       {/* AI Assistant */}
-      <NeoChat tasks={tasks} profile={profile} focusSessions={focusSessions} onSpeakingChange={setIsNeoSpeaking} />
+      <NeoChat
+        tasks={tasks}
+        profile={profile}
+        focusSessions={focusSessions}
+        onSpeakingChange={setIsNeoSpeaking}
+        workspace={workspace}
+        habits={habits}
+        onTaskAdded={fetchTasks}
+        onStartTimer={() => { setIsActive(true); setViewRaw('timer'); }}
+        aiConfig={aiConfig}
+      />
+      {/* Session Debrief */}
+      <SessionDebrief
+        isOpen={showDebrief}
+        onClose={() => setShowDebrief(false)}
+        onStartBreak={() => { setShowDebrief(false); setMode('shortBreak'); setIsActive(true); }}
+        sessionData={debriefData}
+      />
 
       {/* Universal HUD Overlay */}
       <AnimatePresence>
@@ -940,6 +1131,15 @@ export default function App() {
           />
         )}
       </AnimatePresence>
+
+      {/* ── Command Palette ── */}
+      <CommandPalette
+        isOpen={showCommandPalette}
+        onClose={() => setShowCommandPalette(false)}
+        setView={setView}
+        tasks={tasks}
+        setIsActive={setIsActive}
+      />
     </div>
   );
 }

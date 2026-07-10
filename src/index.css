@@ -112,6 +112,26 @@
     margin-top: 1.25em;
     margin-bottom: 1.25em;
   }
+  .prose ul {
+    list-style-type: disc;
+    padding-left: 1.625em;
+    margin-top: 1.25em;
+    margin-bottom: 1.25em;
+  }
+  .prose ol {
+    list-style-type: decimal;
+    padding-left: 1.625em;
+    margin-top: 1.25em;
+    margin-bottom: 1.25em;
+  }
+  .prose li {
+    margin-top: 0.5em;
+    margin-bottom: 0.5em;
+  }
+  .prose li > p {
+    margin-top: 0.5em;
+    margin-bottom: 0.5em;
+  }
   .prose pre {
     margin-top: 1.7142857em;
     margin-bottom: 1.7142857em;
@@ -178,6 +198,49 @@
 
 .glass-panel {
   @apply bg-midnight-base/70 border border-white/5 backdrop-blur-2xl;
+}
+
+/* Premium Sidebar */
+.sidebar-premium {
+  background: linear-gradient(180deg, rgba(5,8,8,0.98) 0%, rgba(3,5,5,0.99) 100%);
+  box-shadow: 1px 0 0 0 rgba(255,255,255,0.04);
+}
+
+.sidebar-tooltip {
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04);
+}
+
+/* Premium Dashboard Card */
+.dashboard-card {
+  background: linear-gradient(145deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 20px;
+  box-shadow:
+    0 1px 0 0 rgba(255,255,255,0.05) inset,
+    0 4px 20px rgba(0,0,0,0.25);
+  transition: border-color 0.25s ease, box-shadow 0.25s ease;
+}
+
+.dashboard-card:hover {
+  border-color: rgba(255,255,255,0.1);
+}
+
+/* Accent line on top of cards */
+.dashboard-card-accent {
+  position: relative;
+  overflow: hidden;
+}
+
+.dashboard-card-accent::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 20%;
+  right: 20%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent, #00F0FF)60, transparent);
+  opacity: 0.5;
 }
 
 .timer-glow {
@@ -486,8 +549,8 @@
 
 /* Custom scrollbar */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 4px;
+  height: 4px;
 }
 
 ::-webkit-scrollbar-track {
@@ -495,12 +558,12 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.15);
 }
 
 /* Floating Card UI Style */
@@ -908,4 +971,223 @@
 .html-artifact-wrapper iframe {
   display: block;
   background: #ffffff;
-}
+}
+
+/* ═══════════════════════════════════════════════════════════
+   DOCFORGE — Paper editor & TipTap prose inside white paper
+═══════════════════════════════════════════════════════════ */
+
+/* Paper shadow & appearance */
+.docforge-paper {
+  box-shadow:
+    0 2px 8px rgba(0,0,0,0.3),
+    0 8px 32px rgba(0,0,0,0.5),
+    0 24px 80px rgba(0,0,0,0.6),
+    0 0 0 1px rgba(255,255,255,0.04);
+  transition: box-shadow 0.3s ease;
+}
+
+.docforge-paper:hover {
+  box-shadow:
+    0 4px 12px rgba(0,0,0,0.4),
+    0 16px 48px rgba(0,0,0,0.6),
+    0 32px 100px rgba(0,0,0,0.7),
+    0 0 0 1px rgba(255,255,255,0.06);
+}
+
+/* TipTap prose styles inside the white paper */
+.docforge-prose {
+  color: #1a1a1a !important;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.docforge-prose h1 {
+  font-size: 2em;
+  font-weight: 800;
+  color: #111;
+  margin-top: 0.6em;
+  margin-bottom: 0.5em;
+  line-height: 1.2;
+  padding-bottom: 0.3em;
+  border-bottom: 2px solid #222;
+}
+
+.docforge-prose h2 {
+  font-size: 1.45em;
+  font-weight: 700;
+  color: #1a1a1a;
+  margin-top: 1.4em;
+  margin-bottom: 0.4em;
+  line-height: 1.3;
+}
+
+.docforge-prose h3 {
+  font-size: 1.2em;
+  font-weight: 600;
+  color: #222;
+  margin-top: 1.1em;
+  margin-bottom: 0.3em;
+  line-height: 1.35;
+}
+
+.docforge-prose p {
+  margin-bottom: 0.9em;
+  color: #1a1a1a;
+}
+
+.docforge-prose p:last-child {
+  margin-bottom: 0;
+}
+
+.docforge-prose strong { font-weight: 700; color: #111; }
+.docforge-prose em { font-style: italic; }
+.docforge-prose u { text-decoration: underline; }
+.docforge-prose s { text-decoration: line-through; color: #666; }
+
+.docforge-prose a {
+  color: #1a5fa8;
+  text-decoration: underline;
+}
+
+.docforge-prose mark {
+  background: #fff3b0;
+  border-radius: 2px;
+  padding: 1px 2px;
+}
+
+.docforge-prose code {
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  background: #f4f4f4;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 0.88em;
+  color: #333;
+}
+
+.docforge-prose pre {
+  background: #1e1e2e;
+  color: #cdd6f4;
+  border-radius: 8px;
+  padding: 1.2em 1.4em;
+  margin: 1.2em 0;
+  overflow-x: auto;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.88em;
+}
+
+.docforge-prose pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+}
+
+.docforge-prose blockquote {
+  border-left: 4px solid #888;
+  padding-left: 1em;
+  color: #555;
+  font-style: italic;
+  margin: 1.2em 0;
+}
+
+.docforge-prose ul {
+  list-style: disc;
+  padding-left: 1.6em;
+  margin-bottom: 0.9em;
+  color: #1a1a1a;
+}
+
+.docforge-prose ol {
+  list-style: decimal;
+  padding-left: 1.6em;
+  margin-bottom: 0.9em;
+  color: #1a1a1a;
+}
+
+.docforge-prose li {
+  margin-bottom: 0.3em;
+}
+
+.docforge-prose ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0;
+}
+
+.docforge-prose ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6em;
+}
+
+.docforge-prose ul[data-type="taskList"] li input[type="checkbox"] {
+  margin-top: 3px;
+  accent-color: #1a5fa8;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.docforge-prose hr {
+  border: none;
+  border-top: 1px solid #ccc;
+  margin: 1.5em 0;
+}
+
+/* DocForge table styles (inside white paper) */
+.docforge-prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.2em 0;
+  font-size: 0.93em;
+}
+
+.docforge-prose th {
+  background: #f0f0f0;
+  font-weight: 700;
+  padding: 9px 13px;
+  border: 1px solid #ccc;
+  text-align: left;
+  color: #222;
+  font-size: 0.88em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.docforge-prose td {
+  padding: 8px 13px;
+  border: 1px solid #ddd;
+  color: #333;
+  vertical-align: top;
+}
+
+.docforge-prose tr:nth-child(even) td {
+  background: #fafafa;
+}
+
+/* TipTap placeholder inside white paper */
+.docforge-prose p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: #aaa;
+  pointer-events: none;
+  height: 0;
+  font-style: italic;
+}
+
+/* DocForge sidebar scrollbar */
+.docforge-sidebar::-webkit-scrollbar {
+  width: 4px;
+}
+.docforge-sidebar::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.08);
+  border-radius: 2px;
+}
+
+/* DocForge background gradient */
+.docforge-bg {
+  background: radial-gradient(ellipse at 20% 0%, rgba(109,40,217,0.08) 0%, transparent 50%),
+              radial-gradient(ellipse at 80% 100%, rgba(37,99,235,0.06) 0%, transparent 50%),
+              #0c1414;
+}
+

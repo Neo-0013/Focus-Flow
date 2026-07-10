@@ -8,7 +8,11 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "server": "node server/src/index.js",
+    "server:dev": "node --watch server/src/index.js",
+    "dev:docforge": "cd docforge_service && uvicorn main:app --host 0.0.0.0 --port 3001 --reload",
+    "dev:all": "concurrently \"npm run dev\" \"npm run server\" \"npm run dev:docforge\""
   },
   "dependencies": {
     "@codemirror/lang-cpp": "^6.0.2",
@@ -37,6 +41,7 @@
     "@tiptap/extension-table-row": "^3.22.5",
     "@tiptap/extension-task-item": "^3.22.5",
     "@tiptap/extension-task-list": "^3.22.5",
+    "@tiptap/extension-text-align": "^3.23.6",
     "@tiptap/extension-underline": "^3.22.5",
     "@tiptap/pm": "^3.22.5",
     "@tiptap/react": "^3.22.5",
@@ -64,6 +69,7 @@
     "multer": "^2.1.1",
     "node-edge-tts": "^1.2.10",
     "papaparse": "^5.5.3",
+    "pdf-parse": "^2.4.5",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",

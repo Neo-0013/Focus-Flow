@@ -8,3 +8,8 @@ coverage/
 !.env.example
 database.db
 .gemini/
+server/uploads/
+*.pdf
+docforge_service/__pycache__/
+docforge_service/.venv/
+docforge_service/.env
